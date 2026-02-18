@@ -1,4 +1,5 @@
 require 'strscan'
+require 'uri'
 require 'faraday'
 
 
@@ -6,7 +7,7 @@ module Refinery
 module FaradayDownloader
     refine Faraday::Utils.singleton_class do
         def clean_path(path, root = nil)
-            parts = dest.split(::File::SEPARATOR)
+            parts = path.split(::File::SEPARATOR)
             parts.unshift(root) unless root.nil?
             clean_path = parts.reduce([]) do |stack, part|
                 unless part.empty? || part == '.'
@@ -97,7 +98,7 @@ module FaradayDownloader
     end
 
     refine Faraday::Connection do
-        def download(url, dest, dir = nil,
+        def download(url, dest = nil, dir: nil,
                      content_disposition: false,
                      umask: File.umask, mode: 0644 & ~umask,
                      method: :get, body: nil, headers: nil, params: nil, &block)
@@ -114,6 +115,8 @@ module FaradayDownloader
                     on_data&.call(chunk, overall_size, env)
 
                     unless configured
+                        dest = File.basename(URI(url).path) if dest.nil?
+
                         io = if dest.is_a?(String)
                                  if content_disposition
                                      cd = env.response_headers['Content-Disposition']
@@ -132,7 +135,7 @@ module FaradayDownloader
                                  end
                                  dest = Faraday::Utils.clean_path(dest, dir) if dir
                                  FileUtils.mkdir_p(File.dirname(dest), mode: 0777 & ~umask)
-                                 File.open(dest, "wb", mode:)
+                                 File.open(dest, "wb", mode)
                              else
                                  dest
                              end

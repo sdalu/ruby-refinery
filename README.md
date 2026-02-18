@@ -83,7 +83,7 @@ using Refinery::FaradayDownloader
 
 conn = Faraday.new("https://example.com")
 conn.download("/report.pdf", "report.pdf")
-conn.download("/export", ".", content_disposition: true)
+conn.download("/export", dir: '.', content_disposition: true)
 ```
 
 ### `Refinery::Daemonize`
@@ -111,11 +111,13 @@ OptionParser refinements for building command-line tools with common option grou
 ```ruby
 using Refinery::CLI::OptRuby
 using Refinery::CLI::OptCommon
+using Refinery::CLI::OptProcess
 
 opts = {}
 OptionParser.new do |o|
   o.options_ruby
   o.options_common
+  o.options_process
 end.parse!(into: opts)
 ```
 
