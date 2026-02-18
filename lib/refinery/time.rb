@@ -13,7 +13,7 @@ module TimeTruncate
             end
         end
     end
-    
+
     refine DateTime do
         def truncate(mode = :day)
             reset      = [    0,       1,    1,     0,       0,       0, zone ]
@@ -25,11 +25,11 @@ module TimeTruncate
             DateTime.new(*args)
         end
     end
-    
+
     refine Time do
         def minute = min
         def second = sec
-             
+
         def truncate(mode = :second)
             reset      = [ 0, 1, 1, 0, 0, 0, gmt_offset ]
             parts      = [ :year, :month, :day, :hour, :minute, :second       ]
@@ -68,5 +68,5 @@ module TimeStepping
             end
         end
     end
-end 
+end
 end

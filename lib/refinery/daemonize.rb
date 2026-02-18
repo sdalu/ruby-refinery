@@ -25,7 +25,7 @@ module Daemonize
                 ::File.delete(file)
             end
         end
-        
+
         def pid_status(file)
             return :exited unless ::File.exist?(file)
             pid = ::File.read(file).to_i

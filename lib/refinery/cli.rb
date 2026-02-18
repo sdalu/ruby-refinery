@@ -4,22 +4,22 @@ module Refinery
 module CLI
 
 using Refinery::Daemonize
-    
+
 module OptRuby
     refine OptionParser do
         def options_ruby
             self.separator "Ruby options:"
-            
+
             self.on "-I", "--include PATH",  String,
                   "an additional $LOAD_PATH" do |val|
                 $LOAD_PATH.unshift(*val.split(':').map{|v| File.expand_path(v)})
             end
-            
+
             self.on "--debug",
                   "set $DEBUG to true" do
                 $DEBUG = true
             end
-            
+
             self.on "--warn",
                   "enable warnings" do
                 $-w    = true
@@ -34,7 +34,7 @@ module OptCommon
     refine OptionParser do
         def options_common
             self.separator "Common options:"
-            
+
             self.on "-h", "--help" do
                 puts self.to_s
                 exit
@@ -50,7 +50,7 @@ module OptCommon
             self.separator ""
         end
     end
-    
+
     def self.process(opts, logger: nil)
         logger.level = opts[:verbose] ? :info : :warn if logger
     end
