@@ -7,7 +7,7 @@ Gem::Specification.new do |s|
   s.version       = Refinery::VERSION
   s.authors       = [ "Stephane D'Alu" ]
   s.email         = [ "sdalu@sdalu.com" ]
-  s.homepage      = "https://github.com/sdalu/casper"
+  s.homepage      = "https://github.com/sdalu/ruby-refinery"
   s.summary       = "Collection of ruby refinements"
 
   s.add_development_dependency "irb"
@@ -16,6 +16,6 @@ Gem::Specification.new do |s|
 
   s.license       = 'MIT'
 
-  s.files         = %w[ LICENSE Gemfile refinery.gemspec ] + 
-		     Dir['lib/**/*.rb'] 
+  s.files         = %w[ LICENSE Gemfile refinery.gemspec ] +
+		     Dir['lib/**/*.rb']
 end
