@@ -57,7 +57,7 @@ module Downloader
                     io&.write(chunk)
                 end
             end
-
+        ensure
             io&.close if io != dest
         end
     end
