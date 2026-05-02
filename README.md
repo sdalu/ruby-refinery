@@ -63,11 +63,25 @@ Conditionally transform a single key in a `Hash` (immutable and in-place variant
 ```ruby
 using Refinery::HashModify
 
+
 h = { name: "alice", age: 30 }
 
 h.modify(:age) { |v| v + 1 }   # => { name: "alice", age: 31 }  (new hash)
 h.modify!(:age) { |v| v + 1 }  # modifies h in place
 h.modify(:missing) { |v| v }   # => h  (no-op when key absent)
+```
+
+### `Refinery::HashDeflateKeys`
+
+Conditionally transform a single key in a `Hash` (immutable and in-place variants).
+
+```ruby
+using Refinery::HashDeflateKeys
+
+h = { 'person.0.name' => "alice", 'person[0].age' => 30 }
+h.deflate_keys
+
+# => { 'person' => [ { 'name' => "alice', 'age' => 30 } ] }
 ```
 
 ### `Refinery::FaradayDownloader`
