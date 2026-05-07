@@ -30,6 +30,17 @@ Math::PI.to_deg     # => 180.0
 (-Math::PI).to_deg  # => 180.0  (positive: true by default)
 ```
 
+### `Refinery::DateOfMonth`
+
+Select a date at the start or end of month
+
+``` ruby
+using Refinery::DateOfMonth
+
+Date.new(2000,10,1).start_of_mont # => 2000-01-01
+Date.new(2000,10,1).end_of_month  # => 2000-01-31
+```
+
 ### `Refinery::TimeTruncate`
 
 Truncate `Date`, `DateTime`, and `Time` objects to a given precision.
