@@ -111,6 +111,17 @@ conn.download("/report.pdf", "report.pdf")
 conn.download("/export", dir: '.', content_disposition: true)
 ```
 
+A progress-bar middleware is also provided. It shows the filename (from the
+request URL); pass `shorten:` to elide the middle of long names
+(`biglongfile` → `big...file`):
+
+```ruby
+conn = Faraday.new("https://example.com") do |f|
+  f.response :progress_bar, shorten: 10
+end
+conn.download("/big-export.tar.gz")
+```
+
 ### `Refinery::Daemonize`
 
 PID-file management and daemonization helpers on `Process`.

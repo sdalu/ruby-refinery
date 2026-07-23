@@ -46,6 +46,10 @@ module Downloader
                                      end
                                  end
                                  dest = ::Faraday::Utils.clean_path(dest, dir) if dir
+                                 # Publish the final saved filename so that
+                                 # downstream consumers (eg: progress bar) can
+                                 # display it instead of guessing from the uri.
+                                 env[:download_filename] = File.basename(dest)
                                  FileUtils.mkdir_p(File.dirname(dest), mode: 0777 & ~umask)
                                  File.open(dest, "wb", mode)
                              else

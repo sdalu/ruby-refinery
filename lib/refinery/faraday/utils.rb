@@ -58,8 +58,10 @@ module Utils
                 # Retrieve value
                 #   if string quoted un-escape it
                 value = if s.peek(1) == '"'
-                        then s.scan(/"((?:\\.|[^"\\])*)"?/)[0].gsub(/\\(.)/, '\1')
-                        else s.scan(/[^\s;]*/) || ''
+                            s.scan(/"((?:\\.|[^"\\])*)"?/)
+                            (s[1] || '').gsub(/\\(.)/, '\1')
+                        else
+                            s.scan(/[^\s;]*/) || ''
                         end
 
                 # Deal with continuation
