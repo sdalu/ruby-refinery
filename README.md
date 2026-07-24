@@ -109,6 +109,10 @@ using Refinery::FaradayDownloader
 conn = Faraday.new("https://example.com")
 conn.download("/report.pdf", "report.pdf")
 conn.download("/export", dir: '.', content_disposition: true)
+
+# An empty (0-byte) response still creates the file by default;
+# pass create_empty: false to skip creating anything in that case.
+conn.download("/maybe-empty", "out.bin", create_empty: false)
 ```
 
 A progress-bar middleware is also provided. It shows the filename (from the

@@ -21,7 +21,7 @@ class ProgressBar < ::Faraday::Middleware
     def self.shorten(str, max, ellipsis: '...')
         return str if max.nil? || str.length <= max
         keep = max - ellipsis.length
-        return str[0, max] if keep <= 0
+        return str[0, [max, 0].max] if keep <= 0
         head = keep / 2
         tail = keep - head
         "#{str[0, head]}#{ellipsis}#{tail.zero? ? '' : str[-tail..]}"
