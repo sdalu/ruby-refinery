@@ -28,30 +28,36 @@ class ProgressBar < ::Faraday::Middleware
     end
 
     def call(env)
-        on_data    = env.request.on_data
-        bar        = TTY::ProgressBar.new(options[:format], **options[:options])
-        filename   = nil
-        configured = false
+        on_data = env.request.on_data
+        bar     = nil
 
         env.request.on_data = proc do |chunk, overall_size, resp_env|
             on_data&.call(chunk, overall_size, resp_env)
-            unless configured
-                total = resp_env.response_headers['content-length']&.to_i
-                total = nil if total&.zero?
-                bar.update(total:)
-
-                # Prefer the filename resolved by the downloader (final saved
-                # name), falling back to the basename extracted from the uri.
-                filename   = resp_env[:download_filename] ||
-                             File.basename(resp_env.url.path.to_s)
-                filename   = self.class.shorten(filename, options[:shorten]) \
-                                 if options[:shorten]
-                configured = true
-            end
-            bar.advance(chunk.bytesize, filename:)
+            bar ||= new_bar(resp_env)
+            bar.advance(chunk.bytesize)
         end
 
         super
+    end
+
+    private
+
+    # The bar is built on the first chunk, once the filename is known, with
+    # the filename written into the format: TTY::ProgressBar sizes the bar
+    # from the format, so a :filename token filled in later would make the
+    # line wider than the terminal, and every redraw would wrap.
+    def new_bar(env)
+        total = env.response_headers['content-length']&.to_i
+        total = nil if total&.zero?
+        format = options[:format].gsub(':filename') { filename(env) }
+        TTY::ProgressBar.new(format, **options[:options], total:)
+    end
+
+    # Prefer the filename resolved by the downloader (final saved name),
+    # falling back to the basename extracted from the uri.
+    def filename(env)
+        name = env[:download_filename] || File.basename(env.url.path.to_s)
+        options[:shorten] ? self.class.shorten(name, options[:shorten]) : name
     end
 end
 end
