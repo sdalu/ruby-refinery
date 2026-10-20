@@ -106,6 +106,25 @@ h.deflate_keys
 # => { 'person' => [ { 'name' => "alice', 'age' => 30 } ] }
 ```
 
+### `Refinery::EnumeratorThrottling`
+
+Pacing an iteration whose steps cost something outside, such as one API
+call per item.  Each method returns an `Enumerator` (or iterates at once
+with a block) that can be iterated again, its pacing starting afresh;
+items come through exactly as `#each` yields them.
+
+```ruby
+using Refinery::EnumeratorThrottling
+
+dates.wait_inserted(0.0..1.0) { fetch(it) }  # random 0-1 s pause between items
+ids.rate_limited(5, per: 1) { fetch(it) }    # at most 5 items per second
+jobs.time_limited(60, runtime: 5) { run(it) }    # stop before overrunning 60 s
+jobs.time_limited(Time.now + 60, :hard) { run(it) }  # also interrupt the item
+```
+
+`:soft` (the default) checks before each item and never interrupts one;
+`:hard` interrupts the item in progress, the caller's block included.
+
 ### `Refinery::Stats`
 
 Descriptive statistics on an `Array` of numbers; `nil` where a statistic
@@ -246,6 +265,7 @@ require 'refinery/cli'
 require 'refinery/mqtt'
 require 'refinery/string-shaper'
 require 'refinery/stats'
+require 'refinery/enumerator'
 ```
 
 ## License

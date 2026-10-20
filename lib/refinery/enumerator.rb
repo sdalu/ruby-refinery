@@ -1,0 +1,121 @@
+require 'timeout'
+
+module Refinery
+# Pacing an iteration whose steps cost something outside (one API call
+# per item, say): a pause between items, a rate, a time budget.  Each
+# method returns a new Enumerator, or iterates it at once with a block.
+# The returned enumerator walks the receiver's own #each every time it
+# is iterated, so it can be iterated again; its pacing starts afresh.
+# Items are passed on exactly as #each yields them.
+module EnumeratorThrottling
+    # At most +limit+ passes per +interval+ seconds, over a sliding
+    # window.
+    class RateLimiter
+        def initialize(limit, interval = 1)
+            unless limit.is_a?(Integer) && limit.positive?
+                raise ArgumentError, "limit must be a positive Integer, got #{limit.inspect}"
+            end
+            unless interval.is_a?(Numeric) && interval.positive?
+                raise ArgumentError, "interval must be a positive number, got #{interval.inspect}"
+            end
+            @limit    = limit
+            @interval = interval
+            @passes   = []          # monotonic times of the last passes
+            @mutex    = Mutex.new
+        end
+
+        # Wait until one more pass keeps within the rate, then count it
+        def wait
+            @mutex.synchronize do
+                if @passes.size >= @limit
+                    delta = clock - @passes.shift
+                    sleep(@interval - delta) if delta < @interval
+                end
+                @passes << clock    # after the wait: when the pass happens
+            end
+        end
+
+        private
+
+        def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    end
+
+    # Raised by time_limited's :hard budget, distinct from Timeout::Error
+    # so that a timeout of the caller's own is not swallowed
+    class HardLimit < StandardError
+    end
+
+    refine Enumerable do
+        # Stop once +limit+ (seconds, or a deadline: a Time, or anything
+        # with #to_time) is spent.  :soft checks before each item and never
+        # interrupts one; with +runtime+, the expected seconds per item,
+        # it does not start an item that would end past the limit.
+        # :hard also interrupts the item in progress, the caller's
+        # block included, wherever it is.
+        def time_limited(limit, type = :soft, runtime: nil, &block)
+            unless limit.is_a?(Numeric) || limit.is_a?(Time) ||
+                   limit.respond_to?(:to_time)
+                raise TypeError, "expected a Numeric, a Time or #to_time, got #{limit.class}"
+            end
+            unless %i[soft hard].include?(type)
+                raise ArgumentError, "expected :hard or :soft, got #{type.inspect}"
+            end
+            source = self
+            enum   = Enumerator.new do |y|
+                start  = Time.now
+                budget = case limit
+                         when Numeric then limit
+                         when Time    then limit - start
+                         else              limit.to_time - start
+                         end
+                stop   = start + budget
+                next if budget <= 0
+                walk   = lambda do |*|
+                    source.each do |*v|
+                        break if stop <= Time.now + (runtime || 0)
+                        y.yield(*v)
+                    end
+                end
+                if type == :hard
+                    begin
+                        Timeout.timeout(budget, HardLimit, &walk)
+                    rescue HardLimit
+                    end
+                else
+                    walk.()
+                end
+            end
+            block ? enum.each(&block) : enum
+        end
+
+        # At most +limit+ items per +per+ seconds
+        def rate_limited(limit, per: 1, &block)
+            RateLimiter.new(limit, per)     # validate now, not when iterated
+            source = self
+            enum   = Enumerator.new do |y|
+                limiter = RateLimiter.new(limit, per)
+                source.each do |*v|
+                    limiter.wait
+                    y.yield(*v)
+                end
+            end
+            block ? enum.each(&block) : enum
+        end
+
+        # A pause of +w+ seconds between items (none before the first or
+        # after the last); a Range gives a random pause within it.
+        def wait_inserted(w = 0.0..1.0, &block)
+            source = self
+            enum   = Enumerator.new do |y|
+                first = true
+                source.each do |*v|
+                    sleep(w.is_a?(Range) ? Random.rand(w) : w) unless first
+                    first = false
+                    y.yield(*v)
+                end
+            end
+            block ? enum.each(&block) : enum
+        end
+    end
+end
+end
