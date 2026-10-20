@@ -38,17 +38,29 @@ module MQTTResilient
         end
 
         # Retries +retry_count+ times over a broken connection,
-        # reconnecting in between, then raises.
+        # reconnecting in between, then raises: the last reconnect's
+        # error if it failed, else the publish's.
         def publish(topic, message, retain = false, qos = 0,
                     retry_delay: 5.0, retry_count: 3)
-            LOCK.synchronize { super(topic, message, retain, qos) }
-        rescue MQTT::NotConnectedException, MQTT::ProtocolException,
-               Errno::EPIPE, Errno::ECONNRESET, IOError
-            raise if retry_count.zero?
-            sleep(retry_delay / retry_count)
-            retry_count -= 1
-            LOCK.synchronize { self.reconnect }
-            retry
+            reconnect_error = nil
+            begin
+                LOCK.synchronize { super(topic, message, retain, qos) }
+            rescue MQTT::NotConnectedException, MQTT::ProtocolException,
+                   Errno::EPIPE, Errno::ECONNRESET, IOError => e
+                raise reconnect_error || e if retry_count.zero?
+                sleep(retry_delay / retry_count)
+                retry_count -= 1
+                # A broker still away refuses the reconnect: that spends
+                # a retry rather than ending the publish
+                reconnect_error = begin
+                                      LOCK.synchronize { self.reconnect }
+                                      nil
+                                  rescue SystemCallError, SocketError, IOError,
+                                         Timeout::Error, MQTT::Exception => re
+                                      re
+                                  end
+                retry
+            end
         end
     end
 end

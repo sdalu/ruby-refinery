@@ -93,16 +93,19 @@ module OptProcess
     end
 
     def self.process(opts, logger: nil, progname:)
+        # Absolute now: Process.daemon moves to /
         $pidfile = if opts.include?(:pid)
-                       opts[:pid] || File.join('/tmp', progname)
+                       File.expand_path(opts[:pid] || File.join('/tmp', progname))
                    end
+        log      = opts[:log] && File.expand_path(opts[:log])
+
         # Process startup
         Process.pid_check!($pidfile) if $pidfile
         Process.daemon               if opts[:daemonize]
         Process.pid_write($pidfile)  if $pidfile
 
         # Logger
-        logger.reopen(opts[:log])    if logger && opts[:log]
+        logger.reopen(log)           if logger && log
     end
 end
 

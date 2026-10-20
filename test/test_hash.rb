@@ -51,4 +51,11 @@ class TestHashDeflateKeys < Minitest::Test
         h = { 'a.0.b' => 1 }
         assert_equal({ a: [ { b: 1 } ] }, h.deflate_keys(&:to_sym))
     end
+
+    # Regression: a falsy leaf did not end the walk and became {}
+    def test_falsy_leaves_are_kept
+        h = { 'a' => nil, 'b.c' => false, 'd[0]' => nil, 'e' => 1 }
+        assert_equal({ 'a' => nil, 'b' => { 'c' => false }, 'd' => [ nil ],
+                       'e' => 1 }, h.deflate_keys)
+    end
 end

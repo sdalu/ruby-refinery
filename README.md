@@ -275,7 +275,10 @@ Needs the `mqtt` gem, which this gem does not declare.
   and every later write fails with `EPIPE`);
 - `publish` retries over a broken connection, reconnecting in between
   (`retry_count: 3`, `retry_delay: 5.0` seconds spread over the
-  retries; `retry_count: 0` raises at once);
+  retries; `retry_count: 0` raises at once); a reconnect the broker
+  refuses spends a retry, and once they are spent the last reconnect's
+  error is raised, `Errno::ECONNREFUSED` say, rather than the
+  publish's;
 - publishes and reconnects are serialized by one process-wide lock.
 
 ```ruby

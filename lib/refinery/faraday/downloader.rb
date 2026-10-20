@@ -32,8 +32,10 @@ module Downloader
                         # Sanitizing
                         fn = fn.delete("\x00")
                         fn = fn.split(/[\/\\]/).last || ''
-                        fn = fn.sub(/\A\.+/, '')
                         fn = fn.gsub(/\s+/, ' ')
+                        # Dots and blanks together: ' ..' and '. .' are
+                        # dots once stripped
+                        fn = fn.sub(/\A[.\s]+/, '')
                         fn = fn.strip
                         # Override destination (unless sanitizing emptied it)
                         d  = fn unless fn.empty?

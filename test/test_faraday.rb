@@ -120,7 +120,8 @@ class TestDownloader < Minitest::Test
     # The guard against a hostile server: its filename is cut down to a
     # basename with no leading dots before it meets the directory
     def test_refuses_a_content_disposition_escaping_the_directory
-        [ '../../evil.txt', '/etc/evil.txt', '..\\..\\evil.txt', '.evil.txt' ]
+        [ '../../evil.txt', '/etc/evil.txt', '..\\..\\evil.txt', '.evil.txt',
+          ' .evil.txt', '. .evil.txt', "\t..evil.txt" ]
             .each_with_index do |name, i|
             @server.get("/e#{i}", 'x', cd(name))
             @conn.download("/e#{i}", dir: @dir, content_disposition: true)
@@ -129,10 +130,16 @@ class TestDownloader < Minitest::Test
         end
     end
 
+    # Whitespace around the dots included: stripped only after the dots
+    # were, ' ..' came out as '..', and '. .' as '.'
     def test_a_filename_sanitized_to_nothing_falls_back_to_the_url
-        @server.get('/x/fallback.bin', 'x', cd('..'))
-        @conn.download('/x/fallback.bin', dir: @dir, content_disposition: true)
-        assert_equal [ 'fallback.bin' ], files
+        [ '..', ' ..', "\t..", '. .', ' . ' ].each_with_index do |name, i|
+            @server.get("/x/fallback#{i}.bin", 'x', cd(name))
+            @conn.download("/x/fallback#{i}.bin", dir: @dir,
+                           content_disposition: true)
+            assert_equal [ "fallback#{i}.bin" ], files, name.inspect
+            File.delete(File.join(@dir, "fallback#{i}.bin"))
+        end
     end
 
     def test_empty_body_creates_the_file_unless_told_not_to

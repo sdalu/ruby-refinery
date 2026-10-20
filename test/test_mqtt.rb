@@ -18,7 +18,8 @@ end
 
 module MQTTTestHooks
     class << self
-        attr_accessor :fail_for, :always_fail, :fail_with, :reconnect_delay
+        attr_accessor :fail_for, :always_fail, :fail_with, :reconnect_delay,
+                      :connect_refused
 
         def reset
             @events          = []
@@ -27,6 +28,7 @@ module MQTTTestHooks
             @always_fail     = false
             @fail_with       = MQTT::NotConnectedException
             @reconnect_delay = 0
+            @connect_refused = 0     # connects refused before one succeeds
         end
 
         def events = @mutex.synchronize { @events.dup }
@@ -46,7 +48,14 @@ module MQTTTestHooks
             sleep @reconnect_delay
         end
 
-        def connect = log([ :reconnect_end ])
+        def connect
+            if @connect_refused.positive?
+                @connect_refused -= 1
+                log [ :connect_refused ]
+                raise Errno::ECONNREFUSED
+            end
+            log [ :reconnect_end ]
+        end
     end
 end
 
@@ -71,6 +80,28 @@ class TestMQTTResilient < Minitest::Test
                      'initial try + 3 retries'
         assert_equal 3, events.count { it.first == :reconnect_start },
                      'one reconnect between attempts'
+    end
+
+    # Regression: a reconnect refused by the broker escaped the rescue
+    # and ended the publish with the retries unspent
+    def test_a_refused_reconnect_is_retried
+        MQTTTestHooks.fail_for        = :main
+        MQTTTestHooks.connect_refused = 1
+        Thread.current[:role]         = :main
+        @client.publish('t', 'm', retry_delay: 0.01)
+        assert_equal [ [ :publish_failed, :main ], [ :reconnect_start, false ],
+                       [ :connect_refused ], [ :reconnect_start, false ],
+                       [ :write, :main ] ], events
+    end
+
+    # ...and once they are spent, the reconnect's error is the one raised
+    def test_raises_the_reconnect_error_when_broker_stays_away
+        MQTTTestHooks.always_fail     = true
+        MQTTTestHooks.connect_refused = 99
+        assert_raises(Errno::ECONNREFUSED) do
+            @client.publish('t', 'm', retry_delay: 0.01)
+        end
+        assert_equal 3, events.count([ :connect_refused ]), 'one per retry'
     end
 
     def test_retry_count_zero_raises_at_once

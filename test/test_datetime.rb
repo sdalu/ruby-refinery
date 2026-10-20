@@ -17,6 +17,7 @@ class TestDateOfMonth < Minitest::Test
 end
 
 class TestTimeTruncate < Minitest::Test
+    include Subprocess
     using Refinery::TimeTruncate
 
     def test_date
@@ -38,6 +39,31 @@ class TestTimeTruncate < Minitest::Test
         assert_equal Time.new(2026, 2, 18, 12, 0, 0, '+01:00'), h
         assert_equal 3600, h.utc_offset
         assert_equal Time.new(2026, 2, 18, 12, 34, 56, '+01:00'), t.truncate
+    end
+
+    # Regression: a local time was rebuilt with its own offset, wrong by
+    # an hour once the truncation crossed a DST change.  In a child, for
+    # its own TZ.
+    def test_local_time_across_dst
+        out, err, st = ruby_run(<<~RUBY)
+            ENV['TZ'] = 'Europe/Paris'
+            require 'refinery/datetime'
+            using Refinery::TimeTruncate
+            # summer to winter: the year and the month start in CET
+            y = Time.local(2026, 7, 15, 12, 30).truncate(:year)
+            raise y.inspect unless y == Time.local(2026, 1, 1) && y.utc_offset == 3600
+            raise y.zone.inspect unless y.zone == 'CET'    # still local
+            # the day DST starts: midnight is still CET
+            d = Time.local(2026, 3, 29, 12).truncate(:day)
+            raise d.inspect unless d == Time.new(2026, 3, 29, 0, 0, 0, '+01:00')
+            # the hour repeated when DST ends: the second 02:00, not the first
+            h = Time.new(2026, 10, 25, 2, 30, 0, '+01:00').localtime.truncate(:hour)
+            raise h.inspect unless h == Time.new(2026, 10, 25, 2, 0, 0, '+01:00')
+            raise h.zone.inspect unless h.zone == 'CET'
+            # UTC stays UTC
+            raise 'utc' unless Time.utc(2026, 7, 15, 12).truncate(:month).utc?
+        RUBY
+        assert st.success?, err + out
     end
 
     def test_refuses_an_unknown_precision
@@ -73,5 +99,15 @@ class TestTimeStepping < Minitest::Test
         seen = []
         T0.step(T1, 86400) { seen << it }
         assert_equal 3, seen.size
+    end
+
+    # Regression: the cursor lived outside the enumerator, so a second
+    # iteration resumed where the first stopped
+    def test_reiterable
+        e = T0.step(T1, 86400)
+        assert_equal [ T0, T0 + 86400, T1 ], e.to_a
+        assert_equal [ T0, T0 + 86400, T1 ], e.to_a
+        e.first(2)
+        assert_equal T0, e.to_a.first
     end
 end

@@ -41,13 +41,23 @@ module TimeTruncate
         def minute = min
         def second = sec
 
+        # A local time stays local.  To the day or coarser, it is rebuilt
+        # from the local zone, whose offset may differ from its own across
+        # a DST change; to the hour or finer, it keeps its own offset,
+        # which tells apart the two passes of an hour repeated as DST ends.
         def truncate(mode = :second)
-            reset      = [ 0, 1, 1, 0, 0, 0, gmt_offset ]
-            parts      = [ :year, :month, :day, :hour, :minute, :second       ]
+            reset      = [ 0, 1, 1, 0, 0, 0 ]
+            parts      = [ :year, :month, :day, :hour, :minute, :second ]
             breakpoint = parts.find_index(mode) || raise(ArgumentError)
             args       = parts[..breakpoint  ].map {|m| self.public_send(m) } +
                          reset[breakpoint+1..]
-            Time.new(*args)
+            local      = zone.is_a?(String) && !utc?
+
+            if    local && breakpoint <= 2 then Time.local(*args)
+            elsif local                    then Time.new(*args, utc_offset).localtime
+            elsif utc?                     then Time.utc(*args)
+            else                                Time.new(*args, utc_offset)
+            end
         end
     end
 end
@@ -56,8 +66,9 @@ module TimeStepping
     refine Time do
         def step(limit, step = 1)
             limit = limit.to_time
-            time  = self
+            start = self
             enum  = Enumerator.new do |y|
+                time = start            # afresh on every iteration
                 if    step < 0
                     while (time <=> limit) >= 0 do
                         y << time

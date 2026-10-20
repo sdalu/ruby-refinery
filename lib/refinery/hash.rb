@@ -42,13 +42,14 @@ module HashDeflateKeys
           last = (i == toks.length - 1)
           nxt  = toks[i + 1]
 
+          # (`cur[t] = v and break` would not break on a nil or false v)
           if cur.is_a?(Array)
-            cur[t] = v and break if last
+            if last then cur[t] = v; break end
             cur[t] ||= (nxt.is_a?(Integer) ? [] : {})
             cur = cur[t]
           else
             t = mapper.call(t) if mapper
-            cur[t] = v and break if last
+            if last then cur[t] = v; break end
             cur[t] ||= (nxt.is_a?(Integer) ? [] : {})
             cur = cur[t]
           end

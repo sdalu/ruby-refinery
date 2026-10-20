@@ -55,6 +55,34 @@ class TestCLI < Minitest::Test
         assert_equal 'x.log', opts[:log]
     end
 
+    # Regression: a relative pidfile or logfile was checked from the
+    # start directory but written from /, where Process.daemon moves
+    def test_relative_paths_survive_daemonize
+        Dir.mktmpdir do |dir|
+            report = File.join(dir, 'report')
+            _, err, st = ruby_run(<<~RUBY)
+                require 'refinery/cli'
+                require 'logger'
+                Dir.chdir(#{dir.inspect})
+                logger = Logger.new($stderr)
+                begin
+                    Refinery::CLI::OptProcess.process(
+                        { daemonize: true, pid: 'app.pid', log: 'app.log' },
+                        logger: logger, progname: 'app')
+                    logger.warn('hello')
+                    File.write(#{report.inspect},
+                               [ File.exist?(#{File.join(dir, 'app.pid').inspect}),
+                                 File.exist?(#{File.join(dir, 'app.log').inspect}) ].inspect)
+                rescue Exception => e
+                    File.write(#{report.inspect}, e.message)
+                end
+            RUBY
+            assert st.success?, err
+            50.times { break if File.size?(report); sleep 0.1 }
+            assert_equal '[true, true]', File.read(report)
+        end
+    end
+
     def test_refuses_an_unknown_option
         assert_raises(OptionParser::InvalidOption) { parse('--nope') }
     end
