@@ -118,6 +118,17 @@ class TestTimeStepping < Minitest::Test
         assert_equal 3, seen.size
     end
 
+    # Regression: a Float step was added up, its binary error with it,
+    # so 0.1 ten times went past T0 + 1 and the limit was left out
+    def test_a_float_step_reaches_the_limit
+        t0 = Time.at(0)
+        e  = t0.step(t0 + 1, 0.1).to_a
+        assert_equal 11, e.size
+        assert_equal t0 + 1, e.last
+        assert_equal t0 + Rational(3, 10), e[3]
+        assert_equal 11, (t0 + 1).step(t0, -0.1).count
+    end
+
     # Regression: the cursor lived outside the enumerator, so a second
     # iteration resumed where the first stopped
     def test_reiterable

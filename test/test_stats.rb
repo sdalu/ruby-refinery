@@ -42,6 +42,16 @@ class TestStats < Minitest::Test
         assert_equal 0.0, [ 1 ].variance
     end
 
+    # Regression: interpolating between two infinities gave NaN, where
+    # numpy gives the infinity
+    def test_infinite_values_do_not_make_nan
+        inf = Float::INFINITY
+        assert_equal inf,  [ inf ].median
+        assert_equal inf,  [ 1.0, inf, inf ].median
+        assert_equal(-inf, [ -inf, -inf, 0 ].percentile(25))
+        assert_equal inf,  [ 1.0, inf ].median
+    end
+
     def test_refuses_a_percentile_outside_0_to_100
         [ -1, 100.5, '50', nil ].each do |p|
             assert_raises(ArgumentError, p.inspect) { A.percentile(p) }

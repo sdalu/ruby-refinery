@@ -143,3 +143,10 @@ being written in two steps; and its own pid, in a pidfile it has not
 written, is a stale one whose pid came round again.  The `at_exit`
 cleanup deletes the pidfile only from the process that wrote it, and
 only while it still holds that pid.
+
+Check, delete and link run under an exclusive `flock` on `<pidfile>.lock`.
+Without it two starters over a stale pidfile both found it dead, and
+the slower deleted, by path, the fresh pidfile the faster had just
+linked, then linked its own: both ran (8 rounds in 300 of 8 racing
+starters).  The lock file is never removed: unlinking it would let a
+waiter lock the old file while a newcomer locks a new one.

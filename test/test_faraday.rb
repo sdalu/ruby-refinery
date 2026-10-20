@@ -89,12 +89,18 @@ class CannedServer
     def initialize
         @routes = {}
         @server = TCPServer.new('127.0.0.1', 0)
-        @thread = Thread.new { loop { serve(@server.accept) } }
+        # A thread per connection: a response left stalling must not
+        # hold up the next (a client retrying)
+        @thread = Thread.new { loop { Thread.new(@server.accept) { serve(it) } } }
     end
 
     def url = "http://127.0.0.1:#{@server.addr[1]}"
 
     def get(path, body, headers = {}) = @routes[path] = [ body, headers ]
+
+    # Responses written raw, one per connection in turn, the last
+    # repeating: each a proc given the socket
+    def raw(path, *handlers) = @routes[path] = handlers
 
     def close
         @thread.kill
@@ -106,6 +112,11 @@ class CannedServer
     def serve(sock)
         path = sock.gets.to_s.split[1]
         nil until sock.gets.to_s.strip.empty?
+        route = @routes[path]
+        if route&.first.is_a?(Proc)
+            (route.size > 1 ? route.shift : route.first).(sock)
+            return
+        end
         body, headers = @routes.fetch(path, [ 'not found', {} ])
         sock.write "HTTP/1.1 #{@routes.key?(path) ? 200 : 404} X\r\n"
         { 'Content-Length' => body.bytesize, 'Connection' => 'close' }
@@ -272,6 +283,39 @@ class TestDownloader < Minitest::Test
         assert_equal [ 'given.bin', 'r.bin' ], files
     end
 
+    # Regression: a request retried by a middleware (faraday-retry) had
+    # its second attempt appended to the first's partial body
+    def test_a_retried_download_is_not_appended_to_the_failed_attempt
+        skip 'faraday-retry not installed' unless require_optional('faraday/retry')
+        full  = '0123456789' * 10
+        head  = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+        stall = ->(s) { s.write head + "32\r\n#{full[0, 50]}\r\n"; s.flush; sleep 1.5 }
+        ok    = ->(s) { s.write head + "64\r\n#{full}\r\n0\r\n\r\n" }
+        conn  = ::Faraday.new(@server.url) do |f|
+            f.request :retry, max: 1, interval: 0
+            f.options.timeout = 0.5
+        end
+        path = File.join(@dir, 'f.bin')
+        @server.raw('/f', stall, ok)
+        conn.download('/f', path)
+        assert_equal full, File.read(path)
+        io = StringIO.new(+'kept:')
+        io.seek(0, IO::SEEK_END)
+        @server.raw('/g', stall, ok)
+        conn.download('/g', io)
+        assert_equal "kept:#{full}", io.string
+    end
+
+    # Regression: a Pathname was taken for an IO, and Pathname#write
+    # rewrote the whole file with each chunk: the last one was left
+    def test_a_pathname_dest_is_a_file
+        require 'pathname'
+        @server.get('/big', 'C' * 200_000)
+        @conn.download('/big', Pathname(@dir) / 'p.bin')
+        assert_equal 200_000, File.size(File.join(@dir, 'p.bin'))
+        assert_equal [ 'p.bin' ], files
+    end
+
     def test_a_success_replaces_the_destination
         path = File.join(@dir, 'f.bin')
         File.write(path, 'old')
@@ -296,5 +340,38 @@ class TestProgressBarShorten < Minitest::Test
         assert_equal 'short',       shorten('short', nil)
         assert_equal 'ab',          shorten('abcdef', 2)
         assert_operator shorten('x' * 100, 20).length, :<=, 20
+    end
+end
+
+class TestProgressBarMiddleware < Minitest::Test
+    using Refinery::Faraday::Downloader
+
+    def setup
+        skip 'tty-progressbar not installed' unless
+            require_optional('refinery/faraday/progress-bar')
+        @server = CannedServer.new
+        @out    = StringIO.new
+        @out.define_singleton_method(:tty?) { true }   # else no bar is drawn
+        @conn   = ::Faraday.new(@server.url) do |f|
+            f.response :progress_bar, options: { output: @out }
+        end
+    end
+
+    def teardown = @server&.close
+
+    # Regression: the middleware made every request a streaming one, and
+    # Faraday left the body of a plain request empty
+    def test_a_plain_request_keeps_its_body
+        @server.get('/api', '{"ok":true}')
+        assert_equal '{"ok":true}', @conn.get('/api').body
+    end
+
+    def test_a_download_still_shows_a_bar
+        @server.get('/f.bin', 'x' * 1000)
+        Dir.mktmpdir do |dir|
+            @conn.download('/f.bin', File.join(dir, 'f.bin'))
+            assert_equal 1000, File.size(File.join(dir, 'f.bin'))
+        end
+        refute_empty @out.string, 'no bar drawn'
     end
 end

@@ -67,6 +67,10 @@ t0.step(t1, 86400).to_a
 # => [2026-01-01 00:00:00, 2026-01-02 00:00:00, 2026-01-03 00:00:00]
 ```
 
+The limit is included.  A `Float` step is read as the decimal it was
+written as, to the nanosecond, so `t0.step(t0 + 1, 0.1)` gives 11 times,
+the last `t0 + 1`.
+
 ### `Refinery::HashModify`
 
 Conditionally transform a single key in a `Hash` (immutable and in-place variants).
@@ -100,8 +104,10 @@ on `sep:` (default `.`), `[n]` read as `.n`, and an integer segment
 making an array index.  A block, when given, maps every hash key (not
 array indices, nor integer keys).  An index above `max_index:` (default
 10 000) raises `ArgumentError`, an array being as long as its largest
-index; so does a path that is both a leaf and a branch (`'a'` and
-`'a.b'`).
+index; so do arrays holding in all more than `max_index` slots plus one
+per path segment of the keys (dense input never does; many keys each
+under `max_index` could otherwise still exhaust memory), and a path
+that is both a leaf and a branch (`'a'` and `'a.b'`).
 
 ```ruby
 using Refinery::HashDeflateKeys
@@ -136,7 +142,8 @@ runs.  It never interrupts the caller's own code: neither the block,
 nor the code between two `#next` calls; the iteration stops at the next
 item instead, so a block and `#next` behave alike.  To cut slow work of
 your own, wrap it yourself (`Timeout.timeout(5) { save(it) }`), where
-you know an interruption is safe.
+you know an interruption is safe.  A limit of `Float::INFINITY` is no
+limit.
 
 ### `Refinery::Stats`
 
@@ -221,7 +228,11 @@ status: check `response.status`.  A body ending before its
 `Content-Length` raises `Faraday::ConnectionFailed` (Net::HTTP itself
 lets it pass); see the shortfalls for a compressed one.  A URL naming
 no file (`/`), with no `dest` and no `Content-Disposition` name, raises
-`ArgumentError`.
+`ArgumentError`.  A `Pathname` `dest` is a path.  A request a middleware
+retries (`faraday-retry`) starts the destination over, rather than
+appending to the failed attempt; for an IO destination that means
+rewinding to where the body began, and one that cannot be truncated
+raises `IOError`.
 
 The file is written from Faraday's streaming callback, so the adapter
 must stream: the default `net_http` does, Faraday's `:test` adapter
@@ -230,7 +241,9 @@ does not (the file then comes out empty).
 A progress-bar middleware is also provided (`refinery/faraday/progress-bar`,
 needs the `tty-progressbar` gem). It shows the filename (the one the
 downloader saves to, else from the request URL); pass `shorten:` to
-elide the middle of long names (`biglongfile` → `big...file`):
+elide the middle of long names (`biglongfile` → `big...file`).  It
+draws only for a request that streams (a `download`), and leaves the
+others on the connection alone:
 
 ```ruby
 require 'refinery/faraday/progress-bar'

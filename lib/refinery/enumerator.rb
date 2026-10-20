@@ -71,6 +71,9 @@ module EnumeratorThrottling
             unless %i[soft hard].include?(type)
                 raise ArgumentError, "expected :hard or :soft, got #{type.inspect}"
             end
+            if limit.is_a?(Float) && limit.nan?
+                raise ArgumentError, "expected a number of seconds, got NaN"
+            end
             source = self
             enum   = Enumerator.new do |y|
                 start  = Time.now
@@ -79,9 +82,10 @@ module EnumeratorThrottling
                          when Time    then limit - start
                          else              limit.to_time - start
                          end
-                stop   = start + budget
                 next if budget <= 0
-                late   = -> { stop <= Time.now + (runtime || 0) }
+                # An infinite budget is no limit (Time + Infinity raises)
+                stop   = start + budget unless budget.infinite?
+                late   = -> { stop && stop <= Time.now + (runtime || 0) }
 
                 if type == :soft
                     source.each do |*v|
@@ -106,8 +110,8 @@ module EnumeratorThrottling
                 started = false
                 begin
                     until late.()
-                        left = stop - Time.now
-                        break if left <= 0  # Timeout reads 0 as no limit
+                        left = stop && stop - Time.now  # nil: no deadline
+                        break if left && left <= 0  # Timeout reads 0 as none
                         started = true
                         v = begin
                                 Timeout.timeout(left, HardLimit) { producer.resume }

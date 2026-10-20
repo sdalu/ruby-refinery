@@ -169,7 +169,7 @@ class TestEnumeratorThrottling < Minitest::Test
         done = []
         _, dt = timed { (1..5).time_limited(0.1, :hard) { sleep 0.2; done << it } }
         assert_equal [ 1 ], done
-        assert_operator dt, :<, 0.4
+        assert_operator dt, :<, 0.8      # five items take 1 s; a slow host 0.44 s
     end
 
     def test_hard_limit_does_not_swallow_the_callers_timeout
@@ -181,6 +181,14 @@ class TestEnumeratorThrottling < Minitest::Test
     def test_a_deadline_in_the_past_yields_nothing
         assert_empty (1..3).time_limited(Time.now - 1).to_a
         assert_empty (1..3).time_limited(Time.now - 1, :hard).to_a
+    end
+
+    # Regression: an infinite budget raised FloatDomainError when
+    # iterated; it is no limit
+    def test_an_infinite_budget_is_no_limit
+        assert_equal [ 1, 2 ], [ 1, 2 ].time_limited(Float::INFINITY).to_a
+        assert_equal [ 1, 2 ], [ 1, 2 ].time_limited(Float::INFINITY, :hard).to_a
+        assert_raises(ArgumentError) { [ 1 ].time_limited(Float::NAN) }
     end
 
     def test_refusals_come_at_the_call_not_the_iteration

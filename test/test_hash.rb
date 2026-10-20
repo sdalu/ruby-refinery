@@ -63,6 +63,17 @@ class TestHashDeflateKeys < Minitest::Test
         assert_equal 10_001, { 'a.10000' => 1 }.deflate_keys['a'].size
     end
 
+    # Regression: max_index capped each index, not the whole: every key
+    # could still make an array max_index long, 1000 times its own size.
+    # In all, the arrays may hold max_index plus one slot per key.
+    def test_many_keys_under_max_index_cannot_add_up
+        h = (0...20).to_h { [ "a.#{it}.1000", 1 ] }
+        e = assert_raises(ArgumentError) { h.deflate_keys(max_index: 1000) }
+        assert_match(/slots/, e.message)
+        dense = (0...1000).to_h { [ "row[#{it}].x[0]", it ] }      # 2000 slots
+        assert_equal 1000, dense.deflate_keys(max_index: 1000)['row'].size
+    end
+
     # Regression: a leaf and a nested key on one path lost the leaf in
     # one order and raised NoMethodError in the other
     def test_a_leaf_and_a_nested_key_on_one_path_are_refused

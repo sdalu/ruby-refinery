@@ -106,6 +106,28 @@ class TestDaemonize < Minitest::Test
         assert_equal '99999999', File.read(@pid)
     end
 
+    # Regression: two starters over a stale pidfile could both see it
+    # dead, the slower deleting the faster's fresh pidfile by path, and
+    # both ran.  Check, delete and link now happen under a lock beside
+    # the pidfile: a starter waits for it.
+    def test_a_starter_waits_for_the_pidfile_lock
+        out = File.join(@dir, 'out')
+        File.open("#{@pid}.lock", File::RDWR | File::CREAT) do |lock|
+            lock.flock(File::LOCK_EX)
+            child = Process.spawn(RbConfig.ruby, '-I', File.join(ROOT, 'lib'), '-e', <<~RUBY)
+                require 'refinery/daemonize'
+                using Refinery::Daemonize
+                Process.pid_write(#{@pid.inspect})
+                File.write(#{out.inspect}, File.read(#{@pid.inspect}))
+            RUBY
+            sleep 0.5
+            refute File.exist?(out), 'pid_write went ahead under another lock'
+            lock.flock(File::LOCK_UN)
+            Process.wait(child)
+            assert_equal child.to_s, File.read(out)
+        end
+    end
+
     def test_refuses_to_start_beside_a_running_one
         File.write(@pid, Process.pid.to_s)
         _, err, st = ruby_run(<<~RUBY)

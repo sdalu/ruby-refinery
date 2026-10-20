@@ -30,17 +30,22 @@ module HashDeflateKeys
   refine Hash do
     # An index above +max_index+ raises ArgumentError: an array is as
     # long as its largest index, so one key from outside (a form, a
-    # query string) could otherwise exhaust memory.  So does a path
-    # that is both a leaf and a branch ('a' and 'a.b').
+    # query string) could otherwise exhaust memory.  And the arrays may
+    # hold in all max_index slots, plus one per path segment of the keys
+    # (dense input never needs more): else many keys under max_index
+    # each could still add one long array.  A path that is both a leaf
+    # and a branch ('a' and 'a.b') raises too.
     def deflate_keys(sep: '.', max_index: 10_000, &mapper)
       out    = {}
       branch = ->(c) { c.is_a?(Hash) || c.is_a?(Array) }
+      budget = max_index     # array slots still allowed, nil: no bound
 
       self.each do |k, v|
         toks = k.to_s
                  .gsub(/\[(\d+)\]/, "#{sep}\\1")
                  .split(sep).reject(&:empty?)
                  .map { |t| t.match?(/\A\d+\z/) ? t.to_i : t }
+        budget += toks.size if budget
 
         cur = out
         toks.each_with_index do |t, i|
@@ -53,6 +58,13 @@ module HashDeflateKeys
             end
             if max_index && t > max_index
               raise ArgumentError, "#{k.inspect}: index #{t} over max_index #{max_index}"
+            end
+            if budget && t >= cur.size
+              budget -= t + 1 - cur.size
+              if budget.negative?
+                raise ArgumentError, "#{k.inspect}: arrays over max_index #{max_index} " \
+                                     "slots, plus one per key segment"
+              end
             end
           elsif mapper && t.is_a?(String)
             t = mapper.call(t)      # hash keys only, not integer ones

@@ -23,10 +23,14 @@ module Downloader
             # failing partway, leaves the old copy untouched.  A
             # caller-provided IO gets the body as it comes, whatever the
             # status.
+            # A Pathname is a path: taken for an IO, its #write rewrote
+            # the whole file with each chunk
+            dest     = dest.to_path if defined?(::Pathname) && dest.is_a?(::Pathname)
             to_file  = dest.nil? || dest.is_a?(String)
             final    = nil
             part     = nil
             received = 0
+            start    = nil      # a caller IO's position before the body
 
             # Resolve the final destination from the response. Returns either a
             # String path (a file to open) or the caller-provided IO.
@@ -84,7 +88,27 @@ module Downloader
                     # chunk: leave that to create_empty below.
                     next if io.nil? && chunk.empty?
                     next if to_file && !env.success?
-                    io ||= open_dest.call(env)
+                    if io.nil?
+                        io    = open_dest.call(env)
+                        start = (io.pos rescue nil) unless opened
+                    end
+                    # A middleware retrying (faraday-retry) runs the request
+                    # again, and the adapter counts afresh: a first chunk,
+                    # overall_size its own size, after bytes already
+                    # written.  Start over, rather than append to the
+                    # failed attempt.
+                    if received > 0 && overall_size == chunk.bytesize
+                        if opened
+                            io.rewind
+                            io.truncate(0)
+                        elsif start && io.respond_to?(:truncate)
+                            io.seek(start)
+                            io.truncate(start)
+                        else
+                            raise IOError, "a retried download cannot start over in a #{io.class}"
+                        end
+                        received = 0
+                    end
                     io&.write(chunk)
                     received += chunk.bytesize
                 end

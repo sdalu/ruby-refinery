@@ -67,20 +67,25 @@ module TimeStepping
         def step(limit, step = 1)
             limit = limit.to_time
             start = self
+            # A Float read as the decimal it was written as, to the
+            # nanosecond (0.1, not 0.1000000000000000055...), and each time
+            # computed from the start, not added up: else the binary error
+            # accumulated, and ten steps of 0.1 went past start + 1.
+            delta = step.is_a?(Float) ? step.rationalize(Rational(1, 10**9)) : step
             enum  = Enumerator.new do |y|
-                time = start            # afresh on every iteration
+                i = 0                   # afresh on every iteration
                 if    step < 0
-                    while (time <=> limit) >= 0 do
+                    while ((time = start + i * delta) <=> limit) >= 0 do
                         y << time
-                        time += step
+                        i += 1
                     end
                 elsif step > 0
-                    while (time <=> limit) <= 0 do
+                    while ((time = start + i * delta) <=> limit) <= 0 do
                         y << time
-                        time += step
+                        i += 1
                     end
                 else
-                    loop { y << time }
+                    loop { y << start }
                 end
             end
 

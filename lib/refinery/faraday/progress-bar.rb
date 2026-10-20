@@ -29,6 +29,9 @@ class ProgressBar < ::Faraday::Middleware
 
     def call(env)
         on_data = env.request.on_data
+        # Only a request already streaming (a download): an on_data of
+        # ours would make any other one stream, and leave its body empty
+        return super unless on_data
         bar     = nil
 
         env.request.on_data = proc do |chunk, overall_size, resp_env|

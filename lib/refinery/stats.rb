@@ -22,6 +22,7 @@ module Stats
             rank = (s.size - 1) * p / 100.0
             lo   = s[rank.floor]
             hi   = s[rank.ceil]
+            return lo if lo == hi     # between two infinities: inf - inf is NaN
             lo + (hi - lo) * (rank - rank.floor)
         end
 
