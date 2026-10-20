@@ -45,13 +45,21 @@ module EnumeratorThrottling
     class HardLimit < StandardError
     end
 
+    # Unwinds a source stopped partway, so that its ensures run; not a
+    # StandardError, so that a plain rescue in the source lets it pass
+    class Unwind < Exception        # rubocop:disable Lint/InheritException
+    end
+    private_constant :Unwind
+
     refine Enumerable do
         # Stop once +limit+ (seconds, or a deadline: a Time, or anything
         # with #to_time) is spent.  :soft checks before each item and never
         # interrupts one; with +runtime+, the expected seconds per item,
         # it does not start an item that would end past the limit.
-        # :hard also interrupts the item in progress, the caller's
-        # block included, wherever it is.
+        # :hard also interrupts the source while it produces an item,
+        # and unwinds it.  The caller's code is never interrupted, its
+        # block or, through #next, its code between two calls: the
+        # iteration stops at the next item.  Both ways behave alike.
         def time_limited(limit, type = :soft, runtime: nil, &block)
             unless limit.is_a?(Numeric) || limit.is_a?(Time) ||
                    limit.respond_to?(:to_time)
@@ -70,19 +78,44 @@ module EnumeratorThrottling
                          end
                 stop   = start + budget
                 next if budget <= 0
-                walk   = lambda do |*|
+                late   = -> { stop <= Time.now + (runtime || 0) }
+
+                if type == :soft
                     source.each do |*v|
-                        break if stop <= Time.now + (runtime || 0)
+                        break if late.()
                         y.yield(*v)
                     end
+                    next
                 end
-                if type == :hard
-                    begin
-                        Timeout.timeout(budget, HardLimit, &walk)
-                    rescue HardLimit
+
+                # :hard.  The source runs in a fiber of its own, and the
+                # timeout is armed only while it produces an item.  Armed
+                # over the whole walk, it would fire wherever the thread
+                # is: through #next, in the caller's code between two
+                # calls, where nothing rescues it -- even after the caller
+                # has left the enumerator.
+                producer = Fiber.new do
+                    source.each {|*v| Fiber.yield(v) }
+                    nil
+                rescue Unwind
+                    nil
+                end
+                started = false
+                begin
+                    until late.()
+                        left = stop - Time.now
+                        break if left <= 0  # Timeout reads 0 as no limit
+                        started = true
+                        v = begin
+                                Timeout.timeout(left, HardLimit) { producer.resume }
+                            rescue HardLimit
+                                break
+                            end
+                        break if v.nil?     # the source is done
+                        y.yield(*v)
                     end
-                else
-                    walk.()
+                ensure
+                    producer.raise(Unwind) if started && producer.alive?
                 end
             end
             block ? enum.each(&block) : enum

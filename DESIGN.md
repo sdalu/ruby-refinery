@@ -34,11 +34,25 @@ at the first iteration, so a bad rate fails where it was written.
 Items are passed on with `*v`, as `#each` yields them, so a Hash's
 pairs arrive as pairs.
 
-The `:hard` budget runs the walk under `Timeout.timeout` with an
-exception class of its own, `HardLimit`: rescuing `Timeout::Error`
-would also swallow a timeout raised by the caller's block.  `:hard` can
-interrupt anything, the caller's block included; `:soft` is the
-default because it cannot.
+The `:hard` budget interrupts the source, never the caller.  It once
+ran the whole walk under one `Timeout.timeout`, which interrupts
+whatever the thread is running when it fires.  With a block that was
+always the enumerator's own frames, so the walk ended quietly; through
+`#next`, the caller's code runs on another fiber between two calls, so
+the `HardLimit` landed there, where nothing rescued it, and even fired
+into unrelated code after the caller had left the enumerator, its
+timeout still armed.  No exception can stop the caller's code under
+`#next` without surfacing in it, so the same behaviour both ways meant
+interrupting only the source: it runs in a fiber of its own, the
+timeout is armed only around each `resume` (each item it produces),
+and a source stopped partway is unwound with `Fiber#raise` so that its
+`ensure` runs, as a `break` out of `#each` would.  The cost is a fiber
+switch per item, some microseconds.
+
+`HardLimit` is an exception class of its own: rescuing `Timeout::Error`
+would also swallow a timeout raised by the caller's own code.  The
+unwinding exception is not a `StandardError`, so that a plain `rescue`
+in the source lets it through.
 
 The rate limiter is a sliding window over the last `limit` passes, on
 the monotonic clock, so a wall-clock step cannot burst or stall it.

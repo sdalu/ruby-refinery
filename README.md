@@ -123,11 +123,17 @@ using Refinery::EnumeratorThrottling
 dates.wait_inserted(0.0..1.0) { fetch(it) }  # random 0-1 s pause between items
 ids.rate_limited(5, per: 1) { fetch(it) }    # at most 5 items per second
 jobs.time_limited(60, runtime: 5) { run(it) }    # stop before overrunning 60 s
-jobs.time_limited(Time.now + 60, :hard) { run(it) }  # also interrupt the item
+pages.time_limited(Time.now + 60, :hard) { save(it) } # also cut a hung fetch
 ```
 
-`:soft` (the default) checks before each item and never interrupts one;
-`:hard` interrupts the item in progress, the caller's block included.
+`:soft` (the default) checks before each item and never interrupts one.
+`:hard` also interrupts the source while it produces an item (`pages`
+above, fetching the next page), and unwinds it so that its `ensure`
+runs.  It never interrupts the caller's own code: neither the block,
+nor the code between two `#next` calls; the iteration stops at the next
+item instead, so a block and `#next` behave alike.  To cut slow work of
+your own, wrap it yourself (`Timeout.timeout(5) { save(it) }`), where
+you know an interruption is safe.
 
 ### `Refinery::Stats`
 

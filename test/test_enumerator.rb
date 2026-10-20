@@ -17,6 +17,9 @@ class TestEnumeratorThrottling < Minitest::Test
         assert_equal h.to_a, h.rate_limited(10).to_a
         assert_equal h.to_a, h.wait_inserted(0).to_a
         assert_equal h.to_a, h.time_limited(10).to_a
+        assert_equal h.to_a, h.time_limited(10, :hard).to_a
+        assert_equal [ [ 1, 2 ] ],
+                     Enumerator.new { it.yield 1, 2 }.time_limited(10, :hard).to_a
     end
 
     def test_re_iterable_with_pacing_afresh
@@ -51,11 +54,68 @@ class TestEnumeratorThrottling < Minitest::Test
         assert_empty done
     end
 
-    def test_hard_limit_interrupts_the_item
+    # A source whose third item hangs, noting when its ensure runs
+    def hanging(log)
+        Enumerator.new do |y|
+            n = 0
+            loop { sleep(n == 2 ? 5 : 0.01); y << (n += 1) }
+        ensure
+            log << :unwound
+        end
+    end
+
+    def test_hard_limit_interrupts_the_source
+        log  = []
+        r, dt = timed { hanging(log).time_limited(0.3, :hard).to_a }
+        assert_equal [ 1, 2 ], r
+        assert_operator dt, :<, 1
+        assert_equal [ :unwound ], log, 'source left paused, its ensure not run'
+    end
+
+    def test_hard_limit_interrupts_the_source_through_next
+        log = []
+        e   = hanging(log).time_limited(0.3, :hard)
+        got = []
+        loop { got << e.next }
+        assert_equal [ 1, 2 ], got
+        assert_equal [ :unwound ], log
+    end
+
+    def test_hard_limit_unwinds_a_source_the_caller_breaks_out_of
+        log = []
+        src = Enumerator.new do |y|
+            (1..).each { y << it }
+        ensure
+            log << :unwound
+        end
+        src.time_limited(5, :hard).each { break if it == 2 }
+        assert_equal [ :unwound ], log
+    end
+
+    # Regression: through #next, HardLimit was raised into the caller's
+    # code between two calls, where nothing rescued it
+    def test_hard_limit_through_next_ends_with_stop_iteration
+        e   = (1..5).time_limited(0.3, :hard)
+        got = []
+        loop { got << e.next; sleep 0.2 }   # the limit falls in the sleep
+        assert_equal [ 1, 2 ], got
+    end
+
+    # Regression: an enumerator left after two #next kept its timeout
+    # armed, which fired later into unrelated code
+    def test_hard_limit_never_fires_after_the_enumerator_is_left
+        e = (1..5).time_limited(0.1, :hard)
+        assert_equal [ 1, 2 ], [ e.next, e.next ]
+        sleep 0.3                       # raised HardLimit here
+    end
+
+    # The caller's block, like its code between #next calls, is never
+    # interrupted: the iteration stops at the next item
+    def test_hard_limit_leaves_the_callers_block_alone
         done = []
-        _, dt = timed { (1..5).time_limited(0.1, :hard) { sleep 1; done << it } }
-        assert_empty done
-        assert_operator dt, :<, 0.5
+        _, dt = timed { (1..5).time_limited(0.1, :hard) { sleep 0.2; done << it } }
+        assert_equal [ 1 ], done
+        assert_operator dt, :<, 0.4
     end
 
     def test_hard_limit_does_not_swallow_the_callers_timeout
