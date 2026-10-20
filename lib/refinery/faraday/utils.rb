@@ -34,7 +34,7 @@ module Utils
         def clean_path(path, root = nil)
             parts = path.split(::File::SEPARATOR)
             parts.unshift(root) unless root.nil?
-            clean_path = parts.reduce([]) do |stack, part|
+            parts.reduce([]) do |stack, part|
                 unless part.empty? || part == '.'
                     part == '..' ? stack.pop : stack << part
                 end

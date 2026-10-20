@@ -10,7 +10,7 @@ CLOBBER.include('doc', 'pkg', '*.gem')
 Rake::TestTask.new do |t|
     t.test_files = FileList['test/test_*.rb']
     t.verbose    = true
-    t.warning    = false
+    t.warning    = true     # ruby -w: an unescaped `#$&` in a regex was caught only by it
 end
 
 task :default => :test

@@ -128,7 +128,7 @@ class TestEnumeratorThrottling < Minitest::Test
             begin
                 sleep 1
                 y << :page
-            rescue => e
+            rescue
                 tries += 1
                 retry if tries < 5
             end

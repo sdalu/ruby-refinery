@@ -16,6 +16,7 @@ Gem::Specification.new do |s|
   s.add_development_dependency "minitest"
 
   s.license       = 'MIT'
+  s.required_ruby_version = '>= 3.4'     # `it` in blocks, among others
 
   s.files         = %w[ LICENSE Gemfile refinery.gemspec ] +
 		     Dir['lib/**/*.rb']
