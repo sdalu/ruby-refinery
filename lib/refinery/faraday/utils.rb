@@ -5,6 +5,31 @@ require 'faraday'
 module Refinery
 module Faraday
 module Utils
+    # charset'language'percent-encoded (RFC 5987 ext-value, RFC 2231)
+    EXT_VALUE = /\A([A-Za-z0-9!#$&+\-.^_`{}~]+)'([^']*)'(.*)\z/m
+
+    # Percent-escapes decoded, as bytes
+    def self.pct_decode(s) = s.b.gsub(/%(\h\h)/n) { $1.hex.chr }
+
+    # An ext-value decoded; without a charset, left as it is
+    def self.ext_value(v)
+        return to_utf8(v, 'UTF-8') unless v =~ EXT_VALUE
+        to_utf8(pct_decode($3), $1)
+    end
+
+    # +bytes+ read in +charset+, as a valid UTF-8 String, never raising:
+    # a server picks both, and the downloader works on the result.  What
+    # an unknown charset or an invalid byte leaves undecodable is U+FFFD.
+    def self.to_utf8(bytes, charset)
+        enc  = Encoding.find(charset) rescue Encoding::BINARY  # unknown name
+        opts = { invalid: :replace, undef: :replace, replace: "�" }
+        begin
+            bytes.b.force_encoding(enc).encode(Encoding::UTF_8, **opts)
+        rescue EncodingError                    # dummy encoding, no converter
+            bytes.b.encode(Encoding::UTF_8, **opts)
+        end.scrub("�")
+    end
+
     refine ::Faraday::Utils.singleton_class do
         def clean_path(path, root = nil)
             parts = path.split(::File::SEPARATOR)
@@ -64,38 +89,36 @@ module Utils
                             s.scan(/[^\s;]*/) || ''
                         end
 
-                # Deal with continuation
+                # Deal with continuation: key*<n>, or key*<n>* encoded
                 if key =~ /\A(.+)\*(\d+)(\*)?\z/
-                    (parts["#{$1}#{$3}"] ||= {})[$2.to_i] = value
+                    (parts[$1] ||= {})[$2.to_i] = [ value, !$3.nil? ]
+                elsif key.end_with?('*')
+                    params[key] ||= Utils.ext_value(value)
                 else
-                    params[key] ||= value
+                    params[key] ||= Utils.to_utf8(value, 'UTF-8')
                 end
             end
 
-            parts.each do |key, elts|
-                params[key] = elts.sort_by(&:first).map(&:last).join
+            # RFC 2231 continuations: one value, whose segments may mix
+            # encoded and plain ones.  Joined in order, only the encoded
+            # ones percent-decoded, all in the charset the first one
+            # names; under key* if any segment is encoded, else key.
+            parts.each do |key, segs|
+                segs = segs.sort_by(&:first).map(&:last)
+                if segs.none? {|_, enc| enc }
+                    params[key] = Utils.to_utf8(segs.map(&:first).join, 'UTF-8')
+                    next
+                end
+                charset = 'UTF-8'
+                if segs[0][1] && segs[0][0] =~ EXT_VALUE
+                    charset = $1
+                    segs[0] = [ $3, true ]
+                end
+                bytes = segs.map {|v, enc| enc ? Utils.pct_decode(v) : v.b }.join
+                params["#{key}*"] = Utils.to_utf8(bytes, charset)
             end
 
-            params.to_h {|k,v|
-                [ k,
-                  if k.end_with?('*') &&
-                     v =~ /\A([A-Za-z0-9!#$&+\-.^_`{}~]+)'([^']*)'(.*)\z/m
-                      charset, encoded = $1, $3
-                      decoded = encoded.gsub(/%([0-9A-Fa-f]{2})/) { [$1].pack('H2') }
-
-                      begin
-                          decoded.encode('UTF-8', charset)
-                      rescue ArgumentError,
-                          Encoding::UndefinedConversionError,
-                          Encoding::InvalidByteSequenceError
-                          decoded.encode('UTF-8', 'BINARY',
-                                         invalid: :replace, undef: :replace, replace: '?')
-                      end
-                  else
-                      v
-                  end
-                ]
-            }
+            params
         end
     end
 end

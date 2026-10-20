@@ -23,9 +23,10 @@ module Downloader
             # failing partway, leaves the old copy untouched.  A
             # caller-provided IO gets the body as it comes, whatever the
             # status.
-            to_file = dest.nil? || dest.is_a?(String)
-            final   = nil
-            part    = nil
+            to_file  = dest.nil? || dest.is_a?(String)
+            final    = nil
+            part     = nil
+            received = 0
 
             # Resolve the final destination from the response. Returns either a
             # String path (a file to open) or the caller-provided IO.
@@ -80,7 +81,21 @@ module Downloader
                     next if to_file && !env.success?
                     io ||= open_dest.call(env)
                     io&.write(chunk)
+                    received += chunk.bytesize
                 end
+            end
+
+            # Net::HTTP ignores a body ending before its Content-Length:
+            # count, so that a truncated body is not a success.  Not for a
+            # content-encoded one, whose length counts the bytes before
+            # the adapter inflated them (a gzip cut short fails there)
+            coding = response.headers['content-encoding'].to_s.downcase
+            if response.success? && method != :head &&
+               (coding.empty? || coding == 'identity') &&
+               (length = response.headers['content-length']) &&
+               length.to_i != received
+                raise ::Faraday::ConnectionFailed,
+                      "body truncated: #{received} of #{length.to_i} bytes"
             end
 
             if response.success?

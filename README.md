@@ -213,7 +213,9 @@ A file is written as `<path>.part` and renamed into place only on a
 2xx response: an error response, or a transfer failing partway, leaves
 any existing file untouched and no `.part` behind (the error body is
 not saved).  An IO destination gets the body as it comes, whatever the
-status: check `response.status`.
+status: check `response.status`.  A body ending before its
+`Content-Length` raises `Faraday::ConnectionFailed` (Net::HTTP itself
+lets it pass); see the shortfalls for a compressed one.
 
 The file is written from Faraday's streaming callback, so the adapter
 must stream: the default `net_http` does, Faraday's `:test` adapter
@@ -334,6 +336,11 @@ require 'refinery/mqtt'                   # MQTTResilient (mqtt)
   passes with `..` in it is not.
 - `-V` raises `NameError` unless the program defines a top-level
   `Version`.
+- `download` cannot tell a gzip or deflate body cut short: Net::HTTP
+  inflates it without complaint, and the bytes it hands over are not
+  the ones `Content-Length` counts.  Have Net::HTTP refuse an early end
+  on the connection, which covers every body:
+  `Faraday.new(url) { it.adapter(:net_http) { |http| http.ignore_eof = false } }`.
 
 ## Development
 

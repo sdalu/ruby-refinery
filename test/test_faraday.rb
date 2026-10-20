@@ -1,6 +1,7 @@
 require_relative 'helper'
 
 require 'socket'
+require 'zlib'
 
 return unless require_optional('refinery/faraday/downloader')
 
@@ -29,6 +30,33 @@ class TestContentDisposition < Minitest::Test
         assert_equal 'part1-part2', kv['filename']
         kv = parse("attachment; filename*0*=UTF-8''%C3%A9; filename*1*=t%C3%A9")
         assert_equal 'été', kv['filename*']
+    end
+
+    # Regression: encoded and plain segments went under two keys, so a
+    # name came out cut short, or still percent-encoded
+    def test_rfc2231_mixed_encoded_and_plain_segments
+        kv = parse("attachment; filename*0*=UTF-8''%C3%A9t%C3%A9; filename*1=-report.pdf")
+        assert_equal 'été-report.pdf', kv['filename*']
+        kv = parse('attachment; filename*0=plain-; filename*1*=%C3%A9.pdf')
+        assert_equal 'plain-é.pdf', kv['filename*']
+        # only the segments marked * are percent-decoded
+        kv = parse("attachment; filename*0*=UTF-8''a; filename*1*=b; filename*2=%41.txt")
+        assert_equal 'ab%41.txt', kv['filename*']
+        kv = parse("attachment; filename*0*=ISO-8859-1''%E9t; filename*1=%E9")
+        assert_equal 'ét%E9', kv['filename*']
+    end
+
+    # Regression: an unknown charset raised, and bytes invalid in theirs
+    # came through as a broken String, on which the downloader raised
+    def test_a_bad_charset_or_bad_bytes_never_raise
+        [ "attachment; filename*=x-unknown''a.txt",
+          "attachment; filename*=UTF-8''%FF%FE.txt",
+          "attachment; filename*0*=x-unknown''%FF; filename*1=.txt" ].each do |h|
+            v = parse(h)['filename*']
+            assert_equal Encoding::UTF_8, v.encoding, h
+            assert v.valid_encoding?, h
+            assert v.end_with?('.txt'), h
+        end
     end
 
     def test_nil_and_garbage
@@ -177,6 +205,36 @@ class TestDownloader < Minitest::Test
         end
         assert_equal 'old',       File.read(path)
         assert_equal [ 'f.bin' ], files
+    end
+
+    def test_a_filename_with_bad_bytes_is_still_saved
+        @server.get('/r', 'x', 'Content-Disposition' => "attachment; filename*=UTF-8''%FF.txt")
+        @conn.download('/r', dir: @dir, content_disposition: true)
+        assert_equal [ "�.txt" ], files
+    end
+
+    # Regression: Net::HTTP ignores a body ending before Content-Length,
+    # so a truncated download was saved as a success
+    def test_a_truncated_body_raises_and_leaves_the_destination_alone
+        path = File.join(@dir, 'f.bin')
+        File.write(path, 'old')
+        @server.get('/short', 'abc', 'Content-Length' => 100)
+        e = assert_raises(::Faraday::ConnectionFailed) { @conn.download('/short', path) }
+        assert_match(/3 of 100 bytes/, e.message)
+        assert_equal 'old',       File.read(path)
+        assert_equal [ 'f.bin' ], files
+        io = StringIO.new
+        assert_raises(::Faraday::ConnectionFailed) { @conn.download('/short', io) }
+    end
+
+    # Net::HTTP inflates a gzip body and rewrites Content-Length to match:
+    # not to be taken for a truncated one
+    def test_a_compressed_body_is_not_taken_for_truncated
+        data = 'x' * 10_000
+        @server.get('/gz', Zlib.gzip(data), 'Content-Encoding' => 'gzip')
+        path = File.join(@dir, 'f.bin')
+        @conn.download('/gz', path)
+        assert_equal data, File.read(path)
     end
 
     def test_a_success_replaces_the_destination
