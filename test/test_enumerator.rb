@@ -148,10 +148,12 @@ class TestEnumeratorThrottling < Minitest::Test
 
     # Regression: through #next, HardLimit was raised into the caller's
     # code between two calls, where nothing rescued it
+    # Nexts at about 0, 0.6 and 1.2 s: the 1.0 s limit falls in the
+    # second sleep, 0.4 s from either next (0.1 s was too tight for a Pi)
     def test_hard_limit_through_next_ends_with_stop_iteration
-        e   = (1..5).time_limited(0.3, :hard)
+        e   = (1..5).time_limited(1.0, :hard)
         got = []
-        loop { got << e.next; sleep 0.2 }   # the limit falls in the sleep
+        loop { got << e.next; sleep 0.6 }   # the limit falls in the sleep
         assert_equal [ 1, 2 ], got
     end
 
