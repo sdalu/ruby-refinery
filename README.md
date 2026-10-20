@@ -161,6 +161,29 @@ OptionParser.new do |o|
 end.parse!(into: opts)
 ```
 
+### `Refinery::MQTTResilient`
+
+`MQTT::Client` (mqtt gem) that survives a broker going away:
+
+- `connect` drops the socket when the handshake fails partway, so a
+  retry connects again (the gem leaves it open: `connected?` stays true
+  and every later write fails with `EPIPE`);
+- `publish` retries over a broken connection, reconnecting in between
+  (`retry_count: 3`, `retry_delay: 5.0` seconds spread over the
+  retries; `retry_count: 0` raises at once);
+- publishes and reconnects are serialized by one process-wide lock.
+
+```ruby
+using Refinery::MQTTResilient
+
+client = MQTT::Client.new(host: "broker")
+client.connect
+client.publish("topic", "message")
+```
+
+Note that the gem's exceptions derive from `::Exception`, not
+`StandardError`: rescue `MQTT::Exception` explicitly.
+
 ## Requiring
 
 Load only what you need:
@@ -172,6 +195,7 @@ require 'refinery/hash'
 require 'refinery/downloader'
 require 'refinery/daemonize'
 require 'refinery/cli'
+require 'refinery/mqtt'
 ```
 
 ## License
