@@ -32,13 +32,13 @@ Math::PI.to_deg     # => 180.0
 
 ### `Refinery::DateOfMonth`
 
-Select a date at the start or end of month
+The first or last day of a `Date`'s month.
 
-``` ruby
+```ruby
 using Refinery::DateOfMonth
 
-Date.new(2000,10,1).start_of_mont # => 2000-01-01
-Date.new(2000,10,1).end_of_month  # => 2000-01-31
+Date.new(2000,10,17).start_of_month # => 2000-10-01
+Date.new(2000,10,17).end_of_month   # => 2000-10-31
 ```
 
 ### `Refinery::TimeTruncate`
@@ -95,15 +95,19 @@ using Refinery::HashToString
 
 ### `Refinery::HashDeflateKeys`
 
-Conditionally transform a single key in a `Hash` (immutable and in-place variants).
+A nested structure out of a `Hash` with flat path keys: segments split
+on `sep:` (default `.`), `[n]` read as `.n`, and an integer segment
+making an array index.  A block, when given, maps every hash key (not
+array indices).
 
 ```ruby
 using Refinery::HashDeflateKeys
 
 h = { 'person.0.name' => "alice", 'person[0].age' => 30 }
 h.deflate_keys
+# => { 'person' => [ { 'name' => "alice", 'age' => 30 } ] }
 
-# => { 'person' => [ { 'name' => "alice', 'age' => 30 } ] }
+{ 'a/b' => 1 }.deflate_keys(sep: '/', &:to_sym)  # => { a: { b: 1 } }
 ```
 
 ### `Refinery::EnumeratorThrottling`
@@ -162,16 +166,33 @@ A run of two or more capitals is a word of its own; with
 `split_acronyms: false` it merges with the word after it.  `camelize`
 cannot restore an acronym (`"http_server".camelize` is `"httpServer"`).
 
-### `Refinery::FaradayDownloader`
+### `Refinery::StringTo`
 
-Adds a `download` method to `Faraday::Connection` and a robust `Content-Disposition` parser to `Faraday::Utils`. Supports:
+A `String` made safe for one use.
+
+```ruby
+using Refinery::StringTo
+
+" a/b ".to_filename        # => "a_b"   (`/` and NUL replaced, stripped)
+"<b>".to_html              # => "&lt;b&gt;"
+"a b/c".to_uri_component   # => "a%20b%2Fc"
+```
+
+### `Refinery::Faraday::Downloader`
+
+Needs the `faraday` gem, which this gem does not declare.
+
+Adds a `download` method to `Faraday::Connection` and, through
+`Refinery::Faraday::Utils`, a `Content-Disposition` parser to
+`Faraday::Utils`. Supports:
 
 - RFC 6266 / 5987 / 2231 content-disposition parsing (including continuations and encoded filenames)
 - Streaming download to file or IO
-- Automatic filename extraction from `Content-Disposition`
+- Filename taken from `Content-Disposition` (with `content_disposition: true`),
+  cut down to a basename with no leading dots before it is used
 
 ```ruby
-using Refinery::FaradayDownloader
+using Refinery::Faraday::Downloader
 
 conn = Faraday.new("https://example.com")
 conn.download("/report.pdf", "report.pdf")
@@ -182,11 +203,18 @@ conn.download("/export", dir: '.', content_disposition: true)
 conn.download("/maybe-empty", "out.bin", create_empty: false)
 ```
 
-A progress-bar middleware is also provided. It shows the filename (from the
-request URL); pass `shorten:` to elide the middle of long names
-(`biglongfile` → `big...file`):
+The file is written from Faraday's streaming callback, so the adapter
+must stream: the default `net_http` does, Faraday's `:test` adapter
+does not (the file then comes out empty).
+
+A progress-bar middleware is also provided (`refinery/faraday/progress-bar`,
+needs the `tty-progressbar` gem). It shows the filename (the one the
+downloader saves to, else from the request URL); pass `shorten:` to
+elide the middle of long names (`biglongfile` → `big...file`):
 
 ```ruby
+require 'refinery/faraday/progress-bar'
+
 conn = Faraday.new("https://example.com") do |f|
   f.response :progress_bar, shorten: 10
 end
@@ -212,7 +240,7 @@ OptionParser refinements for building command-line tools with common option grou
 | Module | Adds |
 | --- | --- |
 | `CLI::OptRuby` | `-I`, `--debug`, `--warn` |
-| `CLI::OptCommon` | `-h`, `-v`, `-q`, `-V` (help; verbose, repeatable: `-v` info, `-vv` debug; quiet: errors only; version) |
+| `CLI::OptCommon` | `-h`, `-v`, `-q`, `-V` (help; verbose, repeatable: `-v` info, `-vv` debug; quiet: errors only; version, printing the program's own top-level `Version` constant) |
 | `CLI::OptProcess` | `-d`, `-p`, `-l` (daemonize, pidfile, logfile) |
 
 ```ruby
@@ -226,9 +254,19 @@ OptionParser.new do |o|
   o.options_common
   o.options_process
 end.parse!(into: opts)
+
+Refinery::CLI::OptCommon.level(opts)     # => "warn", "info", "debug" or "error"
+Refinery::CLI::OptCommon.process(opts, logger: logger)    # sets logger.level
+Refinery::CLI::OptProcess.process(opts, logger: logger, progname: 'myapp')
 ```
 
+`OptProcess.process` checks and writes the pidfile (`-p` without a name
+gives `/tmp/<progname>`), daemonizes on `-d`, and reopens the logger
+on `-l`.
+
 ### `Refinery::MQTTResilient`
+
+Needs the `mqtt` gem, which this gem does not declare.
 
 `MQTT::Client` (mqtt gem) that survives a broker going away:
 
@@ -256,17 +294,42 @@ Note that the gem's exceptions derive from `::Exception`, not
 Load only what you need:
 
 ```ruby
-require 'refinery/deg-rad'
-require 'refinery/time'
-require 'refinery/hash'
-require 'refinery/downloader'
-require 'refinery/daemonize'
-require 'refinery/cli'
-require 'refinery/mqtt'
-require 'refinery/string-shaper'
-require 'refinery/stats'
-require 'refinery/enumerator'
+require 'refinery/deg-rad'                # DegRad
+require 'refinery/datetime'               # DateOfMonth, TimeTruncate, TimeStepping
+require 'refinery/hash'                   # HashModify, HashToString, HashDeflateKeys
+require 'refinery/enumerator'             # EnumeratorThrottling
+require 'refinery/stats'                  # Stats
+require 'refinery/string-shaper'          # StringShaper
+require 'refinery/string-to'              # StringTo
+require 'refinery/faraday/downloader'     # Faraday::Downloader (faraday)
+require 'refinery/faraday/progress-bar'   # the middleware (faraday, tty-progressbar)
+require 'refinery/daemonize'              # Daemonize
+require 'refinery/cli'                    # CLI::Opt*
+require 'refinery/mqtt'                   # MQTTResilient (mqtt)
 ```
+
+`refinery/time` loads `refinery/datetime`.
+
+## Known shortfalls
+
+- `Faraday::Utils.clean_path(path, root)` does not confine `path` to
+  `root`: a `..` pops `root` itself, so `clean_path("../x", "/dl")` is
+  `"x"`.  `download` stays inside `dir:` for a `Content-Disposition`
+  name only because that name is sanitized first; a `dest` the caller
+  passes with `..` in it is not.
+- `-V` raises `NameError` unless the program defines a top-level
+  `Version`.
+
+## Development
+
+```sh
+rake test
+```
+
+Tests needing an optional gem run only where it is installed (`faraday`,
+`tty-progressbar`, `mqtt`), saying so when skipped.  The MQTT ones need
+no broker: one fakes the gem's socket calls, the other serves a fake
+broker on a local port.
 
 ## License
 
