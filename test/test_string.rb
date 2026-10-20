@@ -48,6 +48,14 @@ class TestStringTo < Minitest::Test
         assert_equal 'a_b_c', " a/b\0c ".to_filename
     end
 
+    # Regression: '..' and '.' came through, naming a directory
+    def test_to_filename_refuses_dot_names
+        assert_equal '__', '..'.to_filename
+        assert_equal '_',  ' . '.to_filename
+        assert_equal '_',  '  '.to_filename
+        assert_equal '..a', '..a'.to_filename      # a name of its own
+    end
+
     def test_escapes
         assert_equal '&lt;a href=&quot;x&quot;&gt;', '<a href="x">'.to_html
         assert_equal 'a%20b%2Fc',                    'a b/c'.to_uri_component

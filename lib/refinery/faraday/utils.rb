@@ -6,7 +6,7 @@ module Refinery
 module Faraday
 module Utils
     # charset'language'percent-encoded (RFC 5987 ext-value, RFC 2231)
-    EXT_VALUE = /\A([A-Za-z0-9!#$&+\-.^_`{}~]+)'([^']*)'(.*)\z/m
+    EXT_VALUE = /\A([A-Za-z0-9!\#$&+\-.^_`{}~]+)'([^']*)'(.*)\z/m
 
     # Percent-escapes decoded, as bytes
     def self.pct_decode(s) = s.b.gsub(/%(\h\h)/n) { $1.hex.chr }
@@ -66,8 +66,10 @@ module Utils
 
                 # Look for a key (everything except [ =;])
                 #   if not well formed consumed until next delimiter
+                # (\# keeps `#$&` literal: unescaped, a regex interpolates
+                # the last match into it)
                 if key = s.scan(/[^ =;]+/)&.downcase
-                    next unless key =~ /\A[\w\-!#$&+.^]+(?:\*\d+\*?|\*)?\z/i
+                    valid = key.match?(/\A[\w\-!\#$&+.^]+(?:\*\d+\*?|\*)?\z/i)
                 else
                     s.scan(/[^;]*/)
                     next
@@ -76,7 +78,7 @@ module Utils
                 # Look for a value assignment
                 #   if not store it without value
                 unless s.skip(/\s*=\s*/)
-                    params[key] ||= true
+                    params[key] ||= true if valid
                     next
                 end
 
@@ -88,6 +90,9 @@ module Utils
                         else
                             s.scan(/[^\s;]*/) || ''
                         end
+                # A key refused still has its value read, so that parsing
+                # does not resume inside it
+                next unless valid
 
                 # Deal with continuation: key*<n>, or key*<n>* encoded
                 if key =~ /\A(.+)\*(\d+)(\*)?\z/

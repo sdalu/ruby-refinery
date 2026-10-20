@@ -57,6 +57,55 @@ class TestDaemonize < Minitest::Test
         refute File.exist?(@pid), 'pidfile left behind at exit'
     end
 
+    # Regression: the pidfile was created empty and written after, and
+    # an empty one read as pid 0, :dead, so a second start in that
+    # window took it over.  It now appears complete or not at all; one
+    # found empty is left alone.
+    def test_an_empty_pidfile_is_not_taken_over
+        File.write(@pid, '')
+        _, err, st = ruby_run(<<~RUBY)
+            require 'refinery/daemonize'
+            using Refinery::Daemonize
+            Process.pid_write(#{@pid.inspect})
+        RUBY
+        assert_equal 1, st.exitstatus, err
+        assert_equal '', File.read(@pid)
+        File.write(@pid, '')
+        File.utime(Time.now - 60, Time.now - 60, @pid)     # long abandoned
+        _, err, st = ruby_run(<<~RUBY)
+            require 'refinery/daemonize'
+            using Refinery::Daemonize
+            Process.pid_write(#{@pid.inspect})
+        RUBY
+        assert st.success?, err
+    end
+
+    # Regression: a stale pidfile holding this process's own pid (pid
+    # reuse) read as :running, and the start refused
+    def test_own_pid_in_a_stale_pidfile_is_stale
+        out, err, st = ruby_run(<<~RUBY)
+            require 'refinery/daemonize'
+            using Refinery::Daemonize
+            File.write(#{@pid.inspect}, Process.pid.to_s)
+            Process.pid_write(#{@pid.inspect})
+            print File.read(#{@pid.inspect})
+        RUBY
+        assert st.success?, err
+        assert_match(/\A\d+\z/, out)
+    end
+
+    # The at_exit cleanup leaves a pidfile that is no longer its own
+    def test_at_exit_leaves_a_pidfile_now_held_by_another
+        _, err, st = ruby_run(<<~RUBY)
+            require 'refinery/daemonize'
+            using Refinery::Daemonize
+            Process.pid_write(#{@pid.inspect})
+            File.write(#{@pid.inspect}, '99999999')
+        RUBY
+        assert st.success?, err
+        assert_equal '99999999', File.read(@pid)
+    end
+
     def test_refuses_to_start_beside_a_running_one
         File.write(@pid, Process.pid.to_s)
         _, err, st = ruby_run(<<~RUBY)

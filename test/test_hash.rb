@@ -52,6 +52,30 @@ class TestHashDeflateKeys < Minitest::Test
         assert_equal({ a: [ { b: 1 } ] }, h.deflate_keys(&:to_sym))
     end
 
+    # Regression: an index made an array that large, whatever it was:
+    # one short key could exhaust memory.  (Small sizes only: the old
+    # code allocates whatever the index says.)
+    def test_refuses_an_index_past_max_index
+        assert_equal({ 'a' => [ nil, nil, 1 ] }, { 'a[2]' => 1 }.deflate_keys(max_index: 2))
+        e = assert_raises(ArgumentError) { { 'a[3]' => 1 }.deflate_keys(max_index: 2) }
+        assert_match(/max_index/, e.message)
+        assert_raises(ArgumentError) { { 'a.10001' => 1 }.deflate_keys }
+        assert_equal 10_001, { 'a.10000' => 1 }.deflate_keys['a'].size
+    end
+
+    # Regression: a leaf and a nested key on one path lost the leaf in
+    # one order and raised NoMethodError in the other
+    def test_a_leaf_and_a_nested_key_on_one_path_are_refused
+        assert_raises(ArgumentError) { { 'a.b' => 1, 'a'   => 2 }.deflate_keys }
+        assert_raises(ArgumentError) { { 'a'   => 2, 'a.b' => 1 }.deflate_keys }
+        assert_raises(ArgumentError) { { 'a.0' => 1, 'a.x' => 2 }.deflate_keys }
+    end
+
+    # Regression: the block got integer keys too, so &:to_sym raised
+    def test_mapper_is_not_handed_an_integer_key
+        assert_equal({ 0 => 1, b: 2 }, { '0' => 1, 'b' => 2 }.deflate_keys(&:to_sym))
+    end
+
     # Regression: a falsy leaf did not end the walk and became {}
     def test_falsy_leaves_are_kept
         h = { 'a' => nil, 'b.c' => false, 'd[0]' => nil, 'e' => 1 }

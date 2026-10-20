@@ -98,7 +98,10 @@ using Refinery::HashToString
 A nested structure out of a `Hash` with flat path keys: segments split
 on `sep:` (default `.`), `[n]` read as `.n`, and an integer segment
 making an array index.  A block, when given, maps every hash key (not
-array indices).
+array indices, nor integer keys).  An index above `max_index:` (default
+10 000) raises `ArgumentError`, an array being as long as its largest
+index; so does a path that is both a leaf and a branch (`'a'` and
+`'a.b'`).
 
 ```ruby
 using Refinery::HashDeflateKeys
@@ -180,6 +183,7 @@ A `String` made safe for one use.
 using Refinery::StringTo
 
 " a/b ".to_filename        # => "a_b"   (`/` and NUL replaced, stripped)
+"..".to_filename           # => "__"    ('', '.' and '..' name no file)
 "<b>".to_html              # => "&lt;b&gt;"
 "a b/c".to_uri_component   # => "a%20b%2Fc"
 ```
@@ -215,7 +219,9 @@ any existing file untouched and no `.part` behind (the error body is
 not saved).  An IO destination gets the body as it comes, whatever the
 status: check `response.status`.  A body ending before its
 `Content-Length` raises `Faraday::ConnectionFailed` (Net::HTTP itself
-lets it pass); see the shortfalls for a compressed one.
+lets it pass); see the shortfalls for a compressed one.  A URL naming
+no file (`/`), with no `dest` and no `Content-Disposition` name, raises
+`ArgumentError`.
 
 The file is written from Faraday's streaming callback, so the adapter
 must stream: the default `net_http` does, Faraday's `:test` adapter
@@ -288,8 +294,9 @@ Needs the `mqtt` gem, which this gem does not declare.
   retry connects again (the gem leaves it open: `connected?` stays true
   and every later write fails with `EPIPE`);
 - `publish` retries over a broken connection, reconnecting in between
-  (`retry_count: 3`, `retry_delay: 5.0` seconds spread over the
-  retries; `retry_count: 0` raises at once); a reconnect the broker
+  (`retry_count: 3`, `retry_delay: 5.0` seconds spread evenly over the
+  retries, `retry_delay / retry_count` before each; `retry_count: 0`
+  raises at once); a reconnect the broker
   refuses spends a retry, and once they are spent the last reconnect's
   error is raised, `Errno::ECONNREFUSED` say, rather than the
   publish's;

@@ -81,6 +81,24 @@ class TestEnumeratorThrottling < Minitest::Test
         assert_equal [ :unwound ], log
     end
 
+    # Regression: HardLimit was a StandardError, so a source retrying on
+    # `rescue => e` swallowed it and ran past the limit
+    def test_hard_limit_survives_a_source_rescuing_standard_error
+        src = Enumerator.new do |y|
+            tries = 0
+            begin
+                sleep 1
+                y << :page
+            rescue => e
+                tries += 1
+                retry if tries < 5
+            end
+        end
+        r, dt = timed { src.time_limited(0.2, :hard).to_a }
+        assert_empty r
+        assert_operator dt, :<, 0.6
+    end
+
     def test_hard_limit_unwinds_a_source_the_caller_breaks_out_of
         log = []
         src = Enumerator.new do |y|

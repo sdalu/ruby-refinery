@@ -43,12 +43,14 @@ module MQTTResilient
         def publish(topic, message, retain = false, qos = 0,
                     retry_delay: 5.0, retry_count: 3)
             reconnect_error = nil
+            # The same pause before each retry, retry_delay in all
+            pause = retry_count.zero? ? 0 : retry_delay.to_f / retry_count
             begin
                 LOCK.synchronize { super(topic, message, retain, qos) }
             rescue MQTT::NotConnectedException, MQTT::ProtocolException,
                    Errno::EPIPE, Errno::ECONNRESET, IOError => e
                 raise reconnect_error || e if retry_count.zero?
-                sleep(retry_delay / retry_count)
+                sleep(pause)
                 retry_count -= 1
                 # A broker still away refuses the reconnect: that spends
                 # a retry rather than ending the publish

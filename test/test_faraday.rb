@@ -59,6 +59,23 @@ class TestContentDisposition < Minitest::Test
         end
     end
 
+    # Regression: `#$&` in the key check's regex interpolated the last
+    # match, so the previous key shaped the check: 'z-a' made an empty
+    # range, and #, $ and & were never allowed
+    def test_previous_key_does_not_shape_the_key_check
+        assert_equal 'r.pdf', parse('attachment; z-a; filename="r.pdf"')['filename']
+        assert_equal 'v',     parse('attachment; a#b$c&d=v')['a#b$c&d']
+        assert_equal 'x',     parse("attachment; filename*=a&b''x")['filename*']
+    end
+
+    # Regression: a rejected key left its value unread, and parsing
+    # resumed inside it, where the server could hide a filename
+    def test_a_rejected_key_skips_its_value
+        kv = parse('attachment; x@y="a;filename=evil.exe"; filename="r.pdf"')
+        assert_equal 'r.pdf', kv['filename']
+        refute kv.key?('x@y')
+    end
+
     def test_nil_and_garbage
         assert_equal({}, parse(nil))
         assert_kind_of Hash, parse('=;=;"')
@@ -235,6 +252,24 @@ class TestDownloader < Minitest::Test
         path = File.join(@dir, 'f.bin')
         @conn.download('/gz', path)
         assert_equal data, File.read(path)
+    end
+
+    # Regression: a root URL gave the name '/', which clean_path turned
+    # into dir: itself -- written beside it, or in its place
+    def test_refuses_a_url_without_a_file_name
+        @server.get('/', 'x')
+        target = File.join(@dir, 'new')
+        assert_raises(ArgumentError) { @conn.download('/', dir: target) }
+        assert_raises(ArgumentError) { @conn.download('/', dir: @dir) }
+        assert_empty files
+    end
+
+    def test_a_root_url_is_fine_given_a_name
+        @server.get('/', 'x', cd('r.bin'))
+        @conn.download('/', dir: @dir, content_disposition: true)
+        assert_equal [ 'r.bin' ], files
+        @conn.download('/', File.join(@dir, 'given.bin'))
+        assert_equal [ 'given.bin', 'r.bin' ], files
     end
 
     def test_a_success_replaces_the_destination

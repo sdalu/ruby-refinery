@@ -40,9 +40,12 @@ module EnumeratorThrottling
         def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
 
-    # Raised by time_limited's :hard budget, distinct from Timeout::Error
-    # so that a timeout of the caller's own is not swallowed
-    class HardLimit < StandardError
+    # Raised by time_limited's :hard budget inside the source, and never
+    # leaving time_limited.  Distinct from Timeout::Error, so that a
+    # timeout of the caller's own is not swallowed; not a StandardError,
+    # so that a source's plain `rescue => e` (a fetcher retrying) does
+    # not swallow it.
+    class HardLimit < Exception     # rubocop:disable Lint/InheritException
     end
 
     # Unwinds a source stopped partway, so that its ensures run; not a

@@ -50,9 +50,11 @@ and a source stopped partway is unwound with `Fiber#raise` so that its
 switch per item, some microseconds.
 
 `HardLimit` is an exception class of its own: rescuing `Timeout::Error`
-would also swallow a timeout raised by the caller's own code.  The
-unwinding exception is not a `StandardError`, so that a plain `rescue`
-in the source lets it through.
+would also swallow a timeout raised by the caller's own code.  Both it
+and the unwinding exception are raised inside the source, so neither
+is a `StandardError`: a source's plain `rescue => e`, a fetcher
+retrying, let a `StandardError` `HardLimit` through no more than a hung
+fetch, and the limit was lost.
 
 The rate limiter is a sliding window over the last `limit` passes, on
 the monotonic clock, so a wall-clock step cannot burst or stall it.
@@ -127,9 +129,17 @@ serialise against each other.
 turns that count into a logger level, with `-q` taking precedence over
 any `-v`.
 
-## Daemonize: an exclusive create
+## Daemonize: an exclusive, atomic create
 
-`pid_write` creates the pidfile with `O_EXCL`, so two starts cannot
-both believe they own it; on `EEXIST` it checks the recorded pid,
-removes a dead one and retries, and refuses (exit 1) beside a live one.
-A pid the caller cannot signal (`EPERM`) counts as running.
+`pid_write` writes the pid to a file of its own and `link(2)`s it to
+the pidfile, which fails if the pidfile exists: so two starts cannot
+both believe they own it, and the pidfile never exists empty.  (Created
+with `O_EXCL` and written after, it did, and a second start reading it
+then found no pid, ruled it dead and took it over.)  On `EEXIST` it
+checks the recorded pid, removes a dead one and retries, and refuses
+(exit 1) beside a live one.  A pid the caller cannot signal (`EPERM`)
+counts as running; so does an empty pidfile less than 5 s old, one
+being written in two steps; and its own pid, in a pidfile it has not
+written, is a stale one whose pid came round again.  The `at_exit`
+cleanup deletes the pidfile only from the process that wrote it, and
+only while it still holds that pid.

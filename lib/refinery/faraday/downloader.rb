@@ -50,6 +50,11 @@ module Downloader
                         d  = fn unless fn.empty?
                     end
                 end
+                # A root URL names no file: '/' would become dir: itself
+                if [ '', '/', '.', '..' ].include?(d)
+                    raise ArgumentError,
+                          "no file name in #{url.inspect}: pass dest, or content_disposition: true"
+                end
                 dir ? ::Faraday::Utils.clean_path(d, dir) : d
             end
 

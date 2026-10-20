@@ -104,6 +104,28 @@ class TestMQTTResilient < Minitest::Test
         assert_equal 3, events.count([ :connect_refused ]), 'one per retry'
     end
 
+    # Regression: each retry slept retry_delay / retries left, 1.83 times
+    # retry_delay in all, and an Integer delay floored to 0 s at first
+    def test_retry_delay_is_spread_evenly
+        MQTTTestHooks.always_fail = true
+        t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        assert_raises(MQTT::NotConnectedException) do
+            @client.publish('t', 'm', retry_delay: 0.3)
+        end
+        dt = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0
+        assert_in_delta 0.3, dt, 0.1
+    end
+
+    def test_an_integer_retry_delay_is_not_floored
+        MQTTTestHooks.always_fail = true
+        slept = []
+        @client.define_singleton_method(:sleep) { slept << it }
+        assert_raises(MQTT::NotConnectedException) do
+            @client.publish('t', 'm', retry_delay: 2, retry_count: 4)
+        end
+        assert_equal [ 0.5 ] * 4, slept
+    end
+
     def test_retry_count_zero_raises_at_once
         MQTTTestHooks.always_fail = true
         assert_raises(MQTT::NotConnectedException) do

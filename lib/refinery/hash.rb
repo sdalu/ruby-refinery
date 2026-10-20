@@ -28,8 +28,13 @@ end
 
 module HashDeflateKeys
   refine Hash do
-    def deflate_keys(sep: '.', &mapper)
-      out = {}
+    # An index above +max_index+ raises ArgumentError: an array is as
+    # long as its largest index, so one key from outside (a form, a
+    # query string) could otherwise exhaust memory.  So does a path
+    # that is both a leaf and a branch ('a' and 'a.b').
+    def deflate_keys(sep: '.', max_index: 10_000, &mapper)
+      out    = {}
+      branch = ->(c) { c.is_a?(Hash) || c.is_a?(Array) }
 
       self.each do |k, v|
         toks = k.to_s
@@ -42,17 +47,33 @@ module HashDeflateKeys
           last = (i == toks.length - 1)
           nxt  = toks[i + 1]
 
-          # (`cur[t] = v and break` would not break on a nil or false v)
           if cur.is_a?(Array)
-            if last then cur[t] = v; break end
-            cur[t] ||= (nxt.is_a?(Integer) ? [] : {})
-            cur = cur[t]
-          else
-            t = mapper.call(t) if mapper
-            if last then cur[t] = v; break end
-            cur[t] ||= (nxt.is_a?(Integer) ? [] : {})
-            cur = cur[t]
+            unless t.is_a?(Integer)
+              raise ArgumentError, "#{k.inspect}: #{t.inspect} under an array"
+            end
+            if max_index && t > max_index
+              raise ArgumentError, "#{k.inspect}: index #{t} over max_index #{max_index}"
+            end
+          elsif mapper && t.is_a?(String)
+            t = mapper.call(t)      # hash keys only, not integer ones
           end
+
+          # (`cur[t] = v and break` would not break on a nil or false v)
+          if last
+            if branch.(cur[t])
+              raise ArgumentError, "#{k.inspect}: a leaf where other keys branch"
+            end
+            cur[t] = v
+            break
+          end
+
+          set = cur.is_a?(Array) ? !cur[t].nil? : cur.key?(t)
+          if !set
+            cur[t] = nxt.is_a?(Integer) ? [] : {}
+          elsif !branch.(cur[t])
+            raise ArgumentError, "#{k.inspect}: a branch where another key is a leaf"
+          end
+          cur = cur[t]
         end
       end
 
