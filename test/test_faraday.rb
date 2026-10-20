@@ -149,6 +149,44 @@ class TestDownloader < Minitest::Test
         assert_equal [ 'a' ], files
         assert_equal 0, File.size(File.join(@dir, 'a'))
     end
+
+    # Regression: an error response was written over the destination,
+    # even with raise_error raising after it
+    def test_an_error_response_leaves_the_destination_alone
+        path   = File.join(@dir, 'f.bin')
+        strict = ::Faraday.new(@server.url) { it.response :raise_error }
+        File.write(path, 'old')
+
+        assert_equal 404, @conn.download('/missing', path).status
+        assert_raises(::Faraday::ResourceNotFound) { strict.download('/missing', path) }
+        @conn.download('/missing', File.join(@dir, 'new.bin'))
+        assert_equal 'old',       File.read(path)
+        assert_equal [ 'f.bin' ], files
+    end
+
+    # A transfer failing partway leaves the old copy and no .part
+    def test_a_failed_transfer_leaves_the_destination_alone
+        path = File.join(@dir, 'f.bin')
+        File.write(path, 'old')
+        @server.get('/big', 'x' * 1_000_000)
+        calls = 0
+        assert_raises(RuntimeError) do
+            @conn.download('/big', path) do |req|
+                req.options.on_data = proc { raise "cut" if (calls += 1) == 2 }
+            end
+        end
+        assert_equal 'old',       File.read(path)
+        assert_equal [ 'f.bin' ], files
+    end
+
+    def test_a_success_replaces_the_destination
+        path = File.join(@dir, 'f.bin')
+        File.write(path, 'old')
+        @server.get('/r', 'new')
+        @conn.download('/r', path)
+        assert_equal 'new',       File.read(path)
+        assert_equal [ 'f.bin' ], files
+    end
 end
 
 class TestProgressBarShorten < Minitest::Test

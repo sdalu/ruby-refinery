@@ -42,6 +42,21 @@ class TestDaemonize < Minitest::Test
         refute File.exist?(@pid), 'pidfile left behind at exit'
     end
 
+    # Regression: a forked child inherited the at_exit cleanup and took
+    # the pidfile with it when it ended
+    def test_a_forked_child_leaves_the_pidfile
+        out, err, st = ruby_run(<<~RUBY)
+            require 'refinery/daemonize'
+            using Refinery::Daemonize
+            Process.pid_write(#{@pid.inspect})
+            Process.wait(fork { })
+            print File.exist?(#{@pid.inspect})
+        RUBY
+        assert st.success?, err
+        assert_equal 'true', out
+        refute File.exist?(@pid), 'pidfile left behind at exit'
+    end
+
     def test_refuses_to_start_beside_a_running_one
         File.write(@pid, Process.pid.to_s)
         _, err, st = ruby_run(<<~RUBY)

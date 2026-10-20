@@ -203,6 +203,12 @@ conn.download("/export", dir: '.', content_disposition: true)
 conn.download("/maybe-empty", "out.bin", create_empty: false)
 ```
 
+A file is written as `<path>.part` and renamed into place only on a
+2xx response: an error response, or a transfer failing partway, leaves
+any existing file untouched and no `.part` behind (the error body is
+not saved).  An IO destination gets the body as it comes, whatever the
+status: check `response.status`.
+
 The file is written from Faraday's streaming callback, so the adapter
 must stream: the default `net_http` does, Faraday's `:test` adapter
 does not (the file then comes out empty).

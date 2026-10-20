@@ -8,8 +8,11 @@ module Daemonize
         def pid_write(file)
             File.write(file, Process.pid.to_s,
                        mode: ::File::CREAT | ::File::EXCL | ::File::WRONLY)
+            # Only in this process: a forked child inherits the handler,
+            # and must not take the pidfile with it when it ends
+            owner = Process.pid
             at_exit do
-                File.delete(file) if File.exist?(file)
+                File.delete(file) if Process.pid == owner && File.exist?(file)
             end
         rescue Errno::EEXIST
             Process.pid_check!(file)

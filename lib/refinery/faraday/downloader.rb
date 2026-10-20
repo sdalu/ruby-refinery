@@ -18,6 +18,14 @@ module Downloader
                      method: :get, body: nil, headers: nil, params: nil, &block)
             io     = nil
             opened = false
+            # A file is written as <path>.part and renamed into place once
+            # the response is a success: an error response, or a transfer
+            # failing partway, leaves the old copy untouched.  A
+            # caller-provided IO gets the body as it comes, whatever the
+            # status.
+            to_file = dest.nil? || dest.is_a?(String)
+            final   = nil
+            part    = nil
 
             # Resolve the final destination from the response. Returns either a
             # String path (a file to open) or the caller-provided IO.
@@ -54,7 +62,8 @@ module Downloader
                 # (eg: progress bar) can display it instead of guessing.
                 env[:download_filename] = File.basename(d)
                 FileUtils.mkdir_p(File.dirname(d), mode: 0777 & ~umask)
-                File.open(d, "wb", mode).tap { opened = true }
+                final, part = d, "#{d}.part"
+                File.open(part, "wb", mode).tap { opened = true }
             end
 
             response = run_request(method, url, body, headers) do |req|
@@ -68,18 +77,27 @@ module Downloader
                     # An empty body still gets one call, with an empty
                     # chunk: leave that to create_empty below.
                     next if io.nil? && chunk.empty?
+                    next if to_file && !env.success?
                     io ||= open_dest.call(env)
                     io&.write(chunk)
                 end
             end
 
-            # An empty body never opened the destination; create it now if
-            # requested.
-            io = open_dest.call(response.env) if io.nil? && create_empty
+            if response.success?
+                # An empty body never opened the destination; create it
+                # now if requested.
+                io = open_dest.call(response.env) if io.nil? && create_empty
+                if opened
+                    io.close
+                    File.rename(part, final)
+                    part = nil
+                end
+            end
 
             response
         ensure
-            io&.close if opened
+            io.close if opened && !io.closed?
+            File.delete(part) if part && File.exist?(part)
         end
     end
 end
