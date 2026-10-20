@@ -106,6 +106,23 @@ h.deflate_keys
 # => { 'person' => [ { 'name' => "alice', 'age' => 30 } ] }
 ```
 
+### `Refinery::Stats`
+
+Descriptive statistics on an `Array` of numbers; `nil` where a statistic
+is undefined (empty array, sample of one).
+
+```ruby
+using Refinery::Stats
+
+a = [2, 4, 4, 4, 5, 5, 7, 9]
+a.mean                    # => 5.0
+a.median                  # => 4.5
+a.percentile(90)          # => 7.6  (linear interpolation, as numpy)
+a.variance                # => 4.0  (population)
+a.stddev(sample: true)    # => 2.138...  (n - 1)
+[].mean                   # => nil
+```
+
 ### `Refinery::StringShaper`
 
 Between camelCase and snake_case.
@@ -224,6 +241,7 @@ require 'refinery/daemonize'
 require 'refinery/cli'
 require 'refinery/mqtt'
 require 'refinery/string-shaper'
+require 'refinery/stats'
 ```
 
 ## License
