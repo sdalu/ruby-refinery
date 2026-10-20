@@ -33,6 +33,23 @@ class TestTimeTruncate < Minitest::Test
         assert_equal DateTime.new(2026, 2, 18, 12, 0, 0, '+01:00'), dt.truncate(:hour)
     end
 
+    # DateTime has #minute and #second of its own: these precisions work
+    # (from MadHouse, where a FIXME claimed they raised)
+    def test_datetime_to_the_minute_and_second
+        dt = DateTime.new(2020, 3, 4, 5, 6, 7)
+        assert_equal DateTime.new(2020, 3, 4, 5, 6, 0), dt.truncate(:minute)
+        assert_equal DateTime.new(2020, 3, 4, 5, 6, 7), dt.truncate(:second)
+    end
+
+    # A local time, to the minute: the hour-or-finer branch, which keeps
+    # the offset and stays local (from MadHouse)
+    def test_local_time_to_the_minute
+        t = Time.new(2020, 3, 4, 5, 6, 7)
+        m = t.truncate(:minute)
+        assert_equal Time.new(2020, 3, 4, 5, 6, 0), m
+        refute_nil m.zone, 'no longer local'
+    end
+
     def test_time_keeps_its_offset
         t = Time.new(2026, 2, 18, 12, 34, 56.5, '+01:00')
         h = t.truncate(:hour)

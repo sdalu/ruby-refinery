@@ -1,4 +1,5 @@
 require_relative 'helper'
+require 'date'
 require 'refinery/enumerator'
 
 class TestEnumeratorThrottling < Minitest::Test
@@ -40,6 +41,41 @@ class TestEnumeratorThrottling < Minitest::Test
         assert_operator dt, :<, 0.1
         _, dt = timed { [ 1, 2, 3 ].wait_inserted(0.05..0.06).to_a }
         assert_operator dt, :>=, 0.1
+    end
+
+    # As MadHouse's tado.rb uses it: an Array of Date, no block, .each,
+    # the default pause.  The pauses are recorded, not slept: the
+    # enumerator calls sleep on the receiver.
+    def test_wait_inserted_default_pause_as_used_by_tado
+        dates = [ Date.new(2026, 1, 1), Date.new(2026, 1, 2), Date.new(2026, 1, 3) ]
+        log   = []
+        dates.define_singleton_method(:sleep) { log << [ :pause, it ] }
+        dates.wait_inserted.each { log << it }
+        assert_equal dates.first, log.first, 'paused before the first item'
+        assert_equal [ dates[0], :pause, dates[1], :pause, dates[2] ],
+                     log.map { it.is_a?(Array) ? it.first : it }
+        log.select { it.is_a?(Array) }.each do |_, s|
+            assert_operator s, :>=, 0.0
+            assert_operator s, :<=, 1.0
+        end
+    end
+
+    # Every pair of items two apart, at least a window apart
+    def test_rate_limited_keeps_the_rate_pair_by_pair
+        start = clock
+        at    = []
+        (1..5).rate_limited(2, per: 0.2) { at << clock - start }
+        [ [ 0, 2 ], [ 1, 3 ], [ 2, 4 ] ].each do |a, b|
+            assert_operator at[b] - at[a], :>=, 0.19, "items #{a} and #{b}: #{at.inspect}"
+        end
+    end
+
+    def test_every_enumerator_can_be_iterated_again
+        [ (1..3).wait_inserted(0), (1..3).rate_limited(10),
+          (1..3).time_limited(5), (1..3).time_limited(5, :hard) ].each do |e|
+            assert_equal [ 1, 2, 3 ], e.to_a
+            assert_equal [ 1, 2, 3 ], e.to_a
+        end
     end
 
     def test_soft_limit_never_interrupts_an_item
@@ -144,6 +180,7 @@ class TestEnumeratorThrottling < Minitest::Test
 
     def test_a_deadline_in_the_past_yields_nothing
         assert_empty (1..3).time_limited(Time.now - 1).to_a
+        assert_empty (1..3).time_limited(Time.now - 1, :hard).to_a
     end
 
     def test_refusals_come_at_the_call_not_the_iteration
