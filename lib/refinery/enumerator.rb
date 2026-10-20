@@ -1,5 +1,3 @@
-require 'timeout'
-
 module Refinery
 # Pacing an iteration whose steps cost something outside (one API call
 # per item, say): a pause between items, a rate, a time budget.  Each
@@ -48,11 +46,123 @@ module EnumeratorThrottling
     class HardLimit < Exception     # rubocop:disable Lint/InheritException
     end
 
-    # Unwinds a source stopped partway, so that its ensures run; not a
-    # StandardError, so that a plain rescue in the source lets it pass
-    class Unwind < Exception        # rubocop:disable Lint/InheritException
+    # Unwinds a source stopped partway (thrown, so that its ensures run
+    # and not even a `rescue Exception` in the source holds it back)
+    UNWIND = Object.new.freeze
+    private_constant :UNWIND
+
+    # One thread for the whole process serving every :hard walk that has
+    # a deadline, as Timeout does: it sleeps until the earliest, then
+    # raises that walk's own HardLimit into the walk's thread -- only if
+    # the walk is armed, that is, inside its source.  Started on first
+    # use; restarted when found dead, so after a fork.  A walk left
+    # unfinished (an enumerator dropped between two #next) is disarmed,
+    # so its entry is just dropped at its deadline.
+    module Watchdog
+        class Entry
+            attr_reader   :deadline, :thread, :exc
+            attr_accessor :armed, :fired
+
+            def initialize(deadline)
+                @deadline = deadline
+                @thread   = Thread.current
+                @exc      = HardLimit.new
+                @armed    = false
+                @fired    = false
+            end
+        end
+
+        @mutex  = Mutex.new
+        @cond   = ConditionVariable.new
+        @queue  = []                # entries, earliest deadline first
+        @thread = nil
+
+        class << self
+            # A walk of the current thread ending at +deadline+, not yet
+            # armed: nothing can fire before the walk is ready to rescue
+            def enter(deadline)
+                entry = Entry.new(deadline)
+                @mutex.synchronize do
+                    start unless @thread&.alive?
+                    at = @queue.bsearch_index { it.deadline > deadline } || @queue.size
+                    @queue.insert(at, entry)
+                    @cond.signal if at.zero?    # a new earliest deadline
+                end
+                entry
+            end
+
+            # Into the source: arm.  False once the deadline has passed.
+            def arm(entry)
+                @mutex.synchronize { entry.armed = !entry.fired }
+            end
+
+            # Hand-over: disarm.  Once this returns no HardLimit of this
+            # walk can be raised any more; one raised just before is in
+            # the thread's queue and is made to land here, still inside
+            # the source, rather than later in the caller's code.
+            # True once the deadline has passed.
+            def disarm(entry)
+                fired = @mutex.synchronize { entry.armed = false; entry.fired }
+                Thread.handle_interrupt(HardLimit => :immediate) {} while Thread.pending_interrupt?(HardLimit)
+                fired
+            end
+
+            # The walk is over.  Its own HardLimit, if still in flight, is
+            # swallowed here; anything else found is raised after.
+            def leave(entry)
+                other = nil
+                Thread.handle_interrupt(HardLimit => :never) do
+                    @mutex.synchronize do
+                        entry.armed = false
+                        @queue.delete_if { it.equal?(entry) }
+                    end
+                    while Thread.pending_interrupt?(HardLimit)
+                        begin
+                            Thread.handle_interrupt(HardLimit => :immediate) {}
+                        rescue HardLimit => e
+                            other ||= e unless e.equal?(entry.exc)  # an enclosing walk's
+                        rescue Exception => e                       # the caller's own
+                            other = e unless other && !other.is_a?(HardLimit)
+                        end
+                    end
+                end
+                raise other if other
+            end
+
+            private
+
+            def start
+                # Threads inherit the interrupt mask of their creator
+                Thread.handle_interrupt(Object => :immediate) do
+                    @cond   = ConditionVariable.new       # after a fork: a fresh one
+                    @queue.select! { it.thread.alive? }   # after a fork: the parent's threads are gone
+                    @thread = Thread.new { run }
+                    @thread.name = 'Refinery::EnumeratorThrottling::Watchdog'
+                end
+            end
+
+            def run
+                @mutex.synchronize do
+                    loop do
+                        entry = @queue.first
+                        if entry.nil?
+                            @cond.wait(@mutex)
+                        elsif (left = entry.deadline - Time.now) > 0
+                            @cond.wait(@mutex, left)
+                        else
+                            @queue.shift
+                            entry.fired = true
+                            begin
+                                entry.thread.raise(entry.exc) if entry.armed && entry.thread.alive?
+                            rescue ThreadError
+                                nil                     # died meanwhile
+                            end
+                        end
+                    end
+                end
+            end
+        end
     end
-    private_constant :Unwind
 
     refine Enumerable do
         # Stop once +limit+ (seconds, or a deadline: a Time, or anything
@@ -95,39 +205,32 @@ module EnumeratorThrottling
                     next
                 end
 
-                # :hard.  The source runs in a fiber of its own, and the
-                # timeout is armed only while it produces an item.  Armed
-                # over the whole walk, it would fire wherever the thread
-                # is: through #next, in the caller's code between two
-                # calls, where nothing rescues it -- even after the caller
-                # has left the enumerator.
-                # The source sees the fiber-locals (Thread.current[...]) of
-                # the fiber that iterates, as it would without :hard; a
-                # lock that fiber holds (Monitor, Mutex) it does not own.
-                locals   = Thread.current.keys.to_h { [ it, Thread.current[it] ] }
-                producer = Fiber.new do
-                    locals.each {|k, v| Thread.current[k] = v }
-                    source.each {|*v| Fiber.yield(v) }
-                    nil
-                rescue Unwind
-                    nil
-                end
-                started = false
-                begin
-                    until late.()
-                        left = stop && stop - Time.now  # nil: no deadline
-                        break if left && left <= 0  # Timeout reads 0 as none
-                        started = true
-                        v = begin
-                                Timeout.timeout(left, HardLimit) { producer.resume }
-                            rescue HardLimit
-                                break
-                            end
-                        break if v.nil?     # the source is done
+                # :hard.  The source runs here, on the iterating fiber,
+                # as under :soft: it sees that fiber's fiber-locals and
+                # owns its locks.  The Watchdog raises this walk's
+                # HardLimit into this thread at the deadline, only while
+                # the walk is armed: armed before entering the source,
+                # disarmed at each hand-over before the item goes to the
+                # caller, re-armed when the caller asks for the next
+                # one.  So nothing fires into the caller's block, into
+                # its code between two #next calls, or after it has left
+                # (the ensure drains anything still in flight).  A
+                # deadline passed while disarmed ends the walk at the
+                # hand-over, by a throw the source cannot rescue, so its
+                # ensures run.  Another walk's HardLimit (an enclosing
+                # :hard walk) is passed on, not swallowed.
+                entry = stop && Watchdog.enter(stop)
+                catch(UNWIND) do
+                    throw UNWIND if late.() || (entry && !Watchdog.arm(entry))
+                    source.each do |*v|
+                        throw UNWIND if entry && Watchdog.disarm(entry)
                         y.yield(*v)
+                        throw UNWIND if late.() || (entry && !Watchdog.arm(entry))
                     end
+                rescue HardLimit => e
+                    raise unless entry && e.equal?(entry.exc)
                 ensure
-                    producer.raise(Unwind) if started && producer.alive?
+                    Watchdog.leave(entry) if entry
                 end
             end
             block ? enum.each(&block) : enum

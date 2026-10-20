@@ -1,8 +1,11 @@
 require_relative 'helper'
 require 'date'
+require 'monitor'
+require 'timeout'
 require 'refinery/enumerator'
 
 class TestEnumeratorThrottling < Minitest::Test
+    include Subprocess
     using Refinery::EnumeratorThrottling
 
     def clock = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -202,6 +205,148 @@ class TestEnumeratorThrottling < Minitest::Test
         assert_equal [ :fr ] * 3, src.time_limited(5).to_a
     ensure
         Thread.current[:refinery_test_locale] = nil
+    end
+
+    # :hard runs the source on the iterating fiber, as :soft does (a
+    # producer fiber of its own, before, cost it the caller's locals and
+    # locks).  In each mode, :hard behaves as :soft in that mode.
+    def locals_source
+        Enumerator.new do |y|
+            y << Thread.current[:refinery_test_locale]
+            Thread.current[:refinery_test_locale] = :set_by_source
+            y << :second
+        end
+    end
+
+    # The source reads the caller's fiber-local, and what it sets reaches
+    # the caller (copied into a producer fiber, a write was lost)
+    def test_hard_block_shares_fiber_locals_both_ways_like_soft
+        %i[soft hard].each do |type|
+            Thread.current[:refinery_test_locale] = :fr
+            assert_equal [ :fr, :second ], locals_source.time_limited(5, type).to_a, type
+            assert_equal :set_by_source, Thread.current[:refinery_test_locale], type
+        end
+    ensure
+        Thread.current[:refinery_test_locale] = nil
+    end
+
+    # Through #next, Ruby's own Enumerator runs the body in a fiber: :hard
+    # sees there what :soft sees
+    def test_hard_next_sees_fiber_locals_as_soft_does
+        got = %i[soft hard].to_h do |type|
+            Thread.current[:refinery_test_locale] = :fr
+            e = locals_source.time_limited(5, type)
+            [ type, [ [ e.next, e.next ], Thread.current[:refinery_test_locale] ] ]
+        end
+        assert_equal got[:soft], got[:hard]
+    ensure
+        Thread.current[:refinery_test_locale] = nil
+    end
+
+    def monitor_source(mon) = Enumerator.new { |y| mon.synchronize { y << 1; y << 2 } }
+
+    # Regression: a Monitor the caller held was another fiber's in the
+    # producer fiber, and the source deadlocked (ThreadError)
+    def test_hard_block_reenters_the_callers_monitor_like_soft
+        mon = Monitor.new
+        mon.synchronize do
+            assert_equal [ 1, 2 ], Timeout.timeout(2) { monitor_source(mon).time_limited(5).to_a }
+            assert_equal [ 1, 2 ], Timeout.timeout(2) { monitor_source(mon).time_limited(5, :hard).to_a }
+        end
+    end
+
+    def test_hard_next_with_the_callers_monitor_behaves_as_soft
+        mon = Monitor.new
+        outcome = lambda do |type|
+            e = monitor_source(mon).time_limited(5, type)
+            Timeout.timeout(2) { [ e.next, e.next ] }
+        rescue Exception => ex
+            ex.class
+        end
+        mon.synchronize { assert_equal outcome.(:soft), outcome.(:hard) }
+    end
+
+    # Many short walks, the caller sleeping past each deadline: nothing
+    # ever lands in the caller's block
+    def test_hard_many_short_walks_never_interrupt_the_caller
+        20.times do
+            done = []
+            (1..3).time_limited(0.005, :hard) { sleep 0.01; done << it }
+            assert_equal [ 1 ], done
+        end
+    end
+
+    # One watchdog thread for the process, started by the first :hard
+    # walk, serves them all: further walks add no thread
+    def test_hard_leaves_no_thread_behind
+        (1..1).time_limited(5, :hard).to_a          # starts the watchdog if not yet
+        before = Thread.list.size
+        (1..3).time_limited(5, :hard).to_a
+        e = (1..3).time_limited(5, :hard)
+        loop { e.next }
+        assert_equal before, Thread.list.size
+    end
+
+    # Regression: an inner :hard walk inside an outer one's source took
+    # the outer's limit for its own and swallowed it: the outer hung
+    def test_a_nested_hard_walk_passes_the_outer_limit_on
+        inner = Enumerator.new { |z| loop { sleep 0.05; z << 1 } }
+        outer = Enumerator.new do |y|
+            y << :a
+            inner.time_limited(5, :hard).each {}
+            y << :b
+        end
+        r, dt = timed { Timeout.timeout(3) { outer.time_limited(0.2, :hard).to_a } }
+        assert_equal [ :a ], r
+        assert_operator dt, :<, 1
+    end
+
+    # The watchdog thread does not survive a fork: the child starts its
+    # own, and the parent's goes on
+    def test_hard_survives_a_fork
+        out, err, st = ruby_run(<<~RUBY)
+            require 'refinery/enumerator'
+            using Refinery::EnumeratorThrottling
+            hanging = Enumerator.new { |y| y << 1; y << 2; sleep 5; y << 3 }
+            mono    = -> { Process.clock_gettime(Process::CLOCK_MONOTONIC) }
+            cut     = lambda do
+                t = mono.(); got = hanging.time_limited(0.1, :hard).to_a
+                got == [ 1, 2 ] && mono.() - t < 1
+            end
+            abort 'parent before' unless cut.()
+            pid = fork { exit!(cut.() ? 0 : 1) }
+            _, status = Process.wait2(pid)
+            abort "child: \#{status.exitstatus}" unless status.success?
+            abort 'parent after' unless cut.()
+            print 'ok'
+        RUBY
+        assert st.success?, err
+        assert_equal 'ok', out
+    end
+
+    # Walks in 8 threads at once, block, #next and abandoned: each cut at
+    # its own deadline, nothing landing in the callers' own code
+    def test_hard_walks_in_many_threads_at_once
+        bad = Queue.new
+        8.times.map do |i|
+            Thread.new do
+                9.times do |k|
+                    limit   = 0.02 + (k % 3) * 0.01
+                    hanging = Enumerator.new { |y| y << 1; y << 2; sleep 5; y << 3 }
+                    t = clock
+                    got = case k % 3
+                          when 0 then hanging.time_limited(limit, :hard).to_a
+                          when 1 then (e = hanging.time_limited(limit, :hard); r = []; loop { r << e.next }; r)
+                          else        (e = hanging.time_limited(limit, :hard); [ e.next, e.next ])
+                          end
+                    bad << "#{i}/#{k}: #{got.inspect} in #{clock - t}" unless got == [ 1, 2 ] && clock - t < limit + 0.5
+                    sleep limit + 0.005             # the caller's own code
+                rescue Exception => ex
+                    bad << "#{i}/#{k}: #{ex.class}"
+                end
+            end
+        end.each(&:join)
+        assert_empty Array.new(bad.size) { bad.pop }
     end
 
     def test_refusals_come_at_the_call_not_the_iteration

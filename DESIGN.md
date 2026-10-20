@@ -43,25 +43,44 @@ the `HardLimit` landed there, where nothing rescued it, and even fired
 into unrelated code after the caller had left the enumerator, its
 timeout still armed.  No exception can stop the caller's code under
 `#next` without surfacing in it, so the same behaviour both ways meant
-interrupting only the source: it runs in a fiber of its own, the
-timeout is armed only around each `resume` (each item it produces),
-and a source stopped partway is unwound with `Fiber#raise` so that its
-`ensure` runs, as a `break` out of `#each` would.  The cost is a fiber
-switch per item, some microseconds.
+interrupting only the source.
+
+A first answer ran the source in a fiber of its own, with the timeout
+armed around each `resume`.  It kept the caller safe, but fiber-locals
+and lock ownership are per fiber: the source lost the caller's locals
+(copied in, its writes lost) and its locks (a `Monitor` the caller held
+deadlocked).  So now the source runs on the iterating fiber, as under
+`:soft`, and one watchdog thread for the whole process (`Timeout`'s
+shape: a deadline-ordered queue, one mutex and condition variable,
+started lazily, restarted when found dead, so after a `fork`) raises
+each walk's own `HardLimit` into the walk's thread at its deadline.  A
+watchdog thread per walk was tried first and crashed Ruby: not Ruby
+itself, but FreeBSD's jemalloc, which dereferences NULL when a new
+thread's first `malloc` cannot create an arena near the address-space
+limit (`ulimit -v`); dozens of live watchdogs also starved the GVL.
+
+What keeps the caller safe is arming.  The watchdog raises only while
+the walk is armed, and arming and disarming happen under the
+watchdog's mutex: armed on entering the source, disarmed at each
+hand-over before the item goes to the caller, re-armed when the caller
+asks for the next.  A limit raised just before the hand-over is drained
+there (`Thread.handle_interrupt(HardLimit => :immediate) {}` while one
+is pending), so it lands inside the source.  A deadline passed while
+disarmed ends the walk at the next hand-over with a `throw`, which a
+source's `rescue Exception` cannot hold, its `ensure`s running as for a
+`break`.  Leaving the walk disarms, dequeues and drains what is still
+in flight.  `Thread.handle_interrupt` masks are per thread, not per
+fiber, so none is left open across a yield: an enumerator dropped
+between two `#next` leaves nothing on the thread.  The cost is a mutex
+section or two per item, under a microsecond.
 
 `HardLimit` is an exception class of its own: rescuing `Timeout::Error`
-would also swallow a timeout raised by the caller's own code.  Both it
-and the unwinding exception are raised inside the source, so neither
-is a `StandardError`: a source's plain `rescue => e`, a fetcher
-retrying, let a `StandardError` `HardLimit` through no more than a hung
-fetch, and the limit was lost.
-
-The fiber has a cost beyond the switch: fiber-locals and lock
-ownership are per fiber.  The iterating fiber's fiber-locals are copied
-into the source's, so a source reading a locale or a request id finds
-it; locks cannot be, so a `Monitor` the caller holds is another fiber's
-there, and taking it deadlocks.  That stays, documented: it is the
-price of interrupting only the source.
+would also swallow a timeout raised by the caller's own code.  It is
+raised inside the source, so it is not a `StandardError`: a source's
+plain `rescue => e`, a fetcher retrying, would swallow it and the
+limit would be lost.  Each walk raises its own instance, so a `:hard`
+walk nested in another's source passes the outer limit on instead of
+taking it for its own.
 
 The rate limiter is a sliding window over the last `limit` passes, on
 the monotonic clock, so a wall-clock step cannot burst or stall it.

@@ -143,10 +143,14 @@ nor the code between two `#next` calls; the iteration stops at the next
 item instead, so a block and `#next` behave alike.  To cut slow work of
 your own, wrap it yourself (`Timeout.timeout(5) { save(it) }`), where
 you know an interruption is safe.  A limit of `Float::INFINITY` is no
-limit.  Under `:hard` the source runs in a fiber of its own: it sees
-the iterating fiber's fiber-locals (`Thread.current[...]`, copied in),
-but not the locks that fiber holds, so a source whose `#each` takes a
-`Monitor` the caller already holds deadlocks there.
+limit.  Under `:hard` the source runs where `:soft` runs it, on the
+iterating fiber: it shares that fiber's fiber-locals (`Thread.current[...]`)
+both ways and re-enters the locks it holds.  The limit is raised by one
+watchdog thread for the whole process, started by the first `:hard`
+walk and restarted after a `fork`.  A `Thread.handle_interrupt(... =>
+:never)` of your own around a walk defers the cut to the next item, as
+it would a `Timeout`; a `:hard` walk inside the source of another one
+passes the outer limit on.
 
 ### `Refinery::Stats`
 
