@@ -18,9 +18,15 @@ rescue LoadError => e
 end
 
 module Subprocess
-    # Run a Ruby snippet against lib/, returning [stdout, stderr, status]
+    # Run a Ruby snippet against lib/, returning [stdout, stderr, status].
+    # The child puts lib/ first itself, once RUBYOPT has run: under
+    # `bundle exec`, RUBYOPT's bundler/setup puts the bundle's copy of
+    # the refinery ahead of -I, and the child tested that copy instead.
+    # The environment is kept, so that the child still finds the
+    # bundle's other gems (mqtt).  Same line, so line numbers hold.
     def ruby_run(code)
-        Open3.capture3(RbConfig.ruby, '-I', File.join(ROOT, 'lib'),
-                       '-e', code)
+        lib = File.join(ROOT, 'lib')
+        Open3.capture3(RbConfig.ruby, '-I', lib,
+                       '-e', "$LOAD_PATH.unshift(#{lib.inspect}); #{code}")
     end
 end
