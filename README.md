@@ -106,6 +106,22 @@ h.deflate_keys
 # => { 'person' => [ { 'name' => "alice', 'age' => 30 } ] }
 ```
 
+### `Refinery::StringShaper`
+
+Between camelCase and snake_case.
+
+```ruby
+using Refinery::StringShaper
+
+"fooBar".snakize                  # => "foo_bar"
+"FooBar".snakize                  # => "foo_bar"
+"foo_bar".camelize                # => "fooBar"
+"foo_bar".camelize(upper: true)   # => "FooBar"
+```
+
+A run of capitals stays one word (`"HTTPServer".snakize` is
+`"httpserver"`), so such names do not round-trip.
+
 ### `Refinery::FaradayDownloader`
 
 Adds a `download` method to `Faraday::Connection` and a robust `Content-Disposition` parser to `Faraday::Utils`. Supports:
@@ -207,6 +223,7 @@ require 'refinery/downloader'
 require 'refinery/daemonize'
 require 'refinery/cli'
 require 'refinery/mqtt'
+require 'refinery/string-shaper'
 ```
 
 ## License
