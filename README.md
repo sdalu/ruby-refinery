@@ -82,6 +82,17 @@ h.modify!(:age) { |v| v + 1 }  # modifies h in place
 h.modify(:missing) { |v| v }   # => h  (no-op when key absent)
 ```
 
+### `Refinery::HashToString`
+
+A `Hash` as a `key=value` list.
+
+```ruby
+using Refinery::HashToString
+
+{ a: 1, b: 2 }.to_str_kvlist            # => "a=1, b=2"
+{ a: 1, b: 2 }.to_str_kvlist(': ', ' ') # => "a: 1 b: 2"
+```
+
 ### `Refinery::HashDeflateKeys`
 
 Conditionally transform a single key in a `Hash` (immutable and in-place variants).
@@ -145,7 +156,7 @@ OptionParser refinements for building command-line tools with common option grou
 | Module | Adds |
 | --- | --- |
 | `CLI::OptRuby` | `-I`, `--debug`, `--warn` |
-| `CLI::OptCommon` | `-h`, `-v`, `-V` (help, verbose, version) |
+| `CLI::OptCommon` | `-h`, `-v`, `-q`, `-V` (help; verbose, repeatable: `-v` info, `-vv` debug; quiet: errors only; version) |
 | `CLI::OptProcess` | `-d`, `-p`, `-l` (daemonize, pidfile, logfile) |
 
 ```ruby

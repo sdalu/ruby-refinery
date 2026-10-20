@@ -21,7 +21,7 @@ module OptRuby
             end
 
             self.on "--warn",
-                  "enable warnings" do
+                  "enable ruby warnings" do
                 $-w    = true
             end
 
@@ -40,7 +40,15 @@ module OptCommon
                 exit
             end
 
-            self.on "-v", "--verbose"
+            # Repeatable, so the option holds a count: -v info, -vv debug
+            verbosity = 0
+            self.on "-v", "--verbose",
+                    "Verbose output, repeat for more (-v info, -vv debug)" do
+                verbosity += 1
+            end
+
+            self.on "-q", "--quiet",
+                    "Quiet mode (errors only)"
 
             self.on "-V", "--version" do
                 puts Version
@@ -51,8 +59,17 @@ module OptCommon
         end
     end
 
+    LEVELS = %w[ warn info debug ].freeze
+
+    # The log level the options ask for: warn, info with -v, debug with
+    # -vv, error with -q
+    def self.level(opts)
+        return 'error' if opts[:quiet]
+        LEVELS[opts[:verbose].to_i.clamp(0, LEVELS.size - 1)]
+    end
+
     def self.process(opts, logger: nil)
-        logger.level = opts[:verbose] ? :info : :warn if logger
+        logger.level = level(opts) if logger
     end
 end
 

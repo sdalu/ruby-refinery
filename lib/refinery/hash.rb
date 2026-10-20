@@ -17,6 +17,15 @@ module HashModify
     end
 end
 
+module HashToString
+    refine Hash do
+        # { a: 1, b: 2 } => "a=1, b=2"
+        def to_str_kvlist(assign = '=', sep = ', ')
+            self.map {|k,v| "#{k}#{assign}#{v}" }.join(sep)
+        end
+    end
+end
+
 module HashDeflateKeys
   refine Hash do
     def deflate_keys(sep: '.', &mapper)
