@@ -28,6 +28,11 @@ What has to be true before a unit of work here is done.
 - [ ] Does the number move? It lives in one file,
       `lib/refinery/_version.rb`, which the gemspec reads. Nothing is
       tagged, so no tag has to agree with it.
+- [ ] Publishing to RubyGems? The name `refinery` is taken there (Philip
+      Arndt's RefineryCMS, `refinery` 1.0): a push under it is refused,
+      and a Gemfile's bare `gem 'refinery'` installs RefineryCMS.
+      Projects take this one by `git:` or `path:` until it is published
+      under a name of its own.
 
 Then capture: whatever this round learned goes to the artifact that owns
 that kind of fact, and anything this list failed to ask becomes a line
