@@ -1,3 +1,4 @@
+require 'optparse'
 require_relative 'daemonize'
 
 module Refinery

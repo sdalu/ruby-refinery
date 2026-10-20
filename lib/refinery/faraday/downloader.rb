@@ -63,13 +63,16 @@ module Downloader
 
                 req.options.on_data = proc do |chunk, overall_size, env|
                     on_data&.call(chunk, overall_size, env)
+                    # An empty body still gets one call, with an empty
+                    # chunk: leave that to create_empty below.
+                    next if io.nil? && chunk.empty?
                     io ||= open_dest.call(env)
                     io&.write(chunk)
                 end
             end
 
-            # An empty body yields no on_data callbacks, so the destination was
-            # never opened; create it now if requested.
+            # An empty body never opened the destination; create it now if
+            # requested.
             io = open_dest.call(response.env) if io.nil? && create_empty
 
             response
