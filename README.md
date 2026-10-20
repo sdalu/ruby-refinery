@@ -132,12 +132,16 @@ using Refinery::StringShaper
 
 "fooBar".snakize                  # => "foo_bar"
 "FooBar".snakize                  # => "foo_bar"
+"HTTPServer".snakize              # => "http_server"
+"IPv6Address".snakize             # => "ipv6_address"
+"HTTPServer".snakize(split_acronyms: false)  # => "httpserver"
 "foo_bar".camelize                # => "fooBar"
 "foo_bar".camelize(upper: true)   # => "FooBar"
 ```
 
-A run of capitals stays one word (`"HTTPServer".snakize` is
-`"httpserver"`), so such names do not round-trip.
+A run of two or more capitals is a word of its own; with
+`split_acronyms: false` it merges with the word after it.  `camelize`
+cannot restore an acronym (`"http_server".camelize` is `"httpServer"`).
 
 ### `Refinery::FaradayDownloader`
 
