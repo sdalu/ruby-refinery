@@ -87,6 +87,21 @@ class TestHashDeflateKeys < Minitest::Test
         assert_equal({ 0 => 1, b: 2 }, { '0' => 1, 'b' => 2 }.deflate_keys(&:to_sym))
     end
 
+    # Regression: sep went into a gsub replacement unescaped, so a
+    # backslash in it read as a back-reference: a[3] landed at index 1
+    def test_bracket_index_with_a_backslash_separator
+        assert_equal({ 'a' => [ nil, nil, nil, 'x' ] }, { 'a[3]' => 'x' }.deflate_keys(sep: '\\'))
+        assert_equal({ 'a' => [ nil, nil, nil, 'x' ] }, { 'a[3]' => 'x' }.deflate_keys(sep: '\\&'))
+    end
+
+    # Regression: in an array, a nil leaf read as an empty slot, so a
+    # branch replaced it, where under a hash key the conflict raised
+    def test_a_nil_leaf_in_an_array_conflicts_with_a_branch
+        assert_raises(ArgumentError) { { 'a.0' => nil, 'a.0.b' => 1 }.deflate_keys }
+        assert_raises(ArgumentError) { { 'a.0.b' => 1, 'a.0' => nil }.deflate_keys }
+        assert_equal({ 'a' => [ nil, { 'b' => 1 } ] }, { 'a.1.b' => 1 }.deflate_keys)
+    end
+
     # Regression: a falsy leaf did not end the walk and became {}
     def test_falsy_leaves_are_kept
         h = { 'a' => nil, 'b.c' => false, 'd[0]' => nil, 'e' => 1 }

@@ -128,6 +128,33 @@ class TestDaemonize < Minitest::Test
         end
     end
 
+    # Regression: pid_write wrote <pidfile>.<pid>.tmp following links: a
+    # symlink planted at that guessable name had its target overwritten,
+    # and the pidfile became a hard link to it
+    def test_pid_write_does_not_follow_a_planted_tmp_symlink
+        victim = File.join(@dir, 'victim')
+        File.write(victim, 'precious')
+        _, err, st = ruby_run(<<~RUBY)
+            require 'refinery/daemonize'
+            using Refinery::Daemonize
+            File.symlink(#{victim.inspect}, "#{@pid}.\#{Process.pid}.tmp")
+            Process.pid_write(#{@pid.inspect})
+            exit!(File.read(#{@pid.inspect}) == Process.pid.to_s ? 0 : 3)
+        RUBY
+        assert st.success?, err
+        assert_equal 'precious', File.read(victim)
+    end
+
+    # Regression: a pid past a C int raised RangeError from kill(2), and
+    # the start died beside a corrupt pidfile; and a negative one asked
+    # kill(2) about a whole process group
+    def test_an_out_of_range_pid_is_dead
+        [ '99999999999', '-1', '0' ].each do |data|
+            File.write(@pid, data)
+            assert_equal :dead, Process.pid_status(@pid), data
+        end
+    end
+
     def test_refuses_to_start_beside_a_running_one
         File.write(@pid, Process.pid.to_s)
         _, err, st = ruby_run(<<~RUBY)

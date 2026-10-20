@@ -191,6 +191,17 @@ class TestEnumeratorThrottling < Minitest::Test
         assert_raises(ArgumentError) { [ 1 ].time_limited(Float::NAN) }
     end
 
+    # Regression: :hard runs the source in a fiber of its own, where the
+    # caller's fiber-locals were missing: a source reading them got nil
+    def test_hard_source_sees_the_callers_fiber_locals
+        Thread.current[:refinery_test_locale] = :fr
+        src = Enumerator.new { |y| 3.times { y << Thread.current[:refinery_test_locale] } }
+        assert_equal [ :fr ] * 3, src.time_limited(5, :hard).to_a
+        assert_equal [ :fr ] * 3, src.time_limited(5).to_a
+    ensure
+        Thread.current[:refinery_test_locale] = nil
+    end
+
     def test_refusals_come_at_the_call_not_the_iteration
         assert_raises(ArgumentError) { [ 1 ].rate_limited(0) }
         assert_raises(ArgumentError) { [ 1 ].rate_limited(1.5) }

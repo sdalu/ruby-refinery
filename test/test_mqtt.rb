@@ -126,6 +126,14 @@ class TestMQTTResilient < Minitest::Test
         assert_equal [ 0.5 ] * 4, slept
     end
 
+    # Regression: the refinement made the payload mandatory, which the
+    # gem defaults to ''
+    def test_publish_payload_defaults_to_empty
+        Thread.current[:role] = :main
+        @client.publish('t')
+        assert_equal [ [ :write, :main ] ], events
+    end
+
     def test_retry_count_zero_raises_at_once
         MQTTTestHooks.always_fail = true
         assert_raises(MQTT::NotConnectedException) do

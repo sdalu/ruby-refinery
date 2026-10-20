@@ -39,10 +39,11 @@ module HashDeflateKeys
       out    = {}
       branch = ->(c) { c.is_a?(Hash) || c.is_a?(Array) }
       budget = max_index     # array slots still allowed, nil: no bound
+      filled = {}.compare_by_identity     # array => indices a key set
 
       self.each do |k, v|
         toks = k.to_s
-                 .gsub(/\[(\d+)\]/, "#{sep}\\1")
+                 .gsub(/\[(\d+)\]/) { "#{sep}#{$1}" }   # sep literal, even '\\'
                  .split(sep).reject(&:empty?)
                  .map { |t| t.match?(/\A\d+\z/) ? t.to_i : t }
         budget += toks.size if budget
@@ -71,6 +72,11 @@ module HashDeflateKeys
           end
 
           # (`cur[t] = v and break` would not break on a nil or false v)
+          # An array slot is set when a key set it, nil leaf included:
+          # not when it reads nil, which a gap below an index does too
+          set = cur.is_a?(Array) ? filled[cur]&.include?(t) : cur.key?(t)
+          (filled[cur] ||= Set.new) << t if cur.is_a?(Array)
+
           if last
             if branch.(cur[t])
               raise ArgumentError, "#{k.inspect}: a leaf where other keys branch"
@@ -79,7 +85,6 @@ module HashDeflateKeys
             break
           end
 
-          set = cur.is_a?(Array) ? !cur[t].nil? : cur.key?(t)
           if !set
             cur[t] = nxt.is_a?(Integer) ? [] : {}
           elsif !branch.(cur[t])

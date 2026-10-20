@@ -76,6 +76,13 @@ class TestContentDisposition < Minitest::Test
         refute kv.key?('x@y')
     end
 
+    # Regression: the key ended at a space but not at a tab, so
+    # `filename\t=` lost the parameter (RFC 7230 allows either)
+    def test_a_tab_before_the_equals_sign
+        assert_equal 'a.pdf', parse(%Q{attachment; filename\t="a.pdf"})['filename']
+        assert_equal 'a.pdf', parse(%Q{attachment;\tfilename\t=\t"a.pdf"})['filename']
+    end
+
     def test_nil_and_garbage
         assert_equal({}, parse(nil))
         assert_kind_of Hash, parse('=;=;"')
@@ -316,6 +323,53 @@ class TestDownloader < Minitest::Test
         assert_equal [ 'p.bin' ], files
     end
 
+    # Regression: <dest>.part had a name anyone could guess and was
+    # opened following links: a symlink planted there had its target
+    # overwritten, and was itself renamed into place
+    def test_a_planted_part_symlink_is_not_followed
+        victim = File.join(@dir, 'victim')
+        File.write(victim, 'precious')
+        dest = File.join(@dir, 'r.pdf')
+        File.symlink(victim, "#{dest}.part")
+        @server.get('/r.pdf', 'data')
+        @conn.download('/r.pdf', dest)
+        assert_equal 'precious', File.read(victim)
+        refute File.symlink?(dest), 'the planted link renamed into place'
+        assert_equal 'data', File.read(dest)
+    end
+
+    # Regression: two downloads to one path shared one .part; one raised
+    # ENOENT and rewrote the file the other had finished
+    def test_two_downloads_to_one_path_do_not_share_a_part
+        @server.get('/a', 'A' * 100_000)
+        @server.get('/b', 'B' * 100_000)
+        dest = File.join(@dir, 'f')
+        rs = [ '/a', '/b' ].map { |p| Thread.new { @conn.download(p, dest).status } }.map(&:value)
+        assert_equal [ 200, 200 ], rs
+        assert_includes [ 'A' * 100_000, 'B' * 100_000 ], File.read(dest)
+        assert_equal [ 'f' ], files
+    end
+
+    # Regression: control characters passed the sanitiser, to the disk
+    # and, through the progress bar, to the terminal
+    def test_control_characters_are_removed_from_a_content_disposition_name
+        @server.get('/x', 'x', cd("\e]0;PWN\a\e[2Jr\u009b.txt"))
+        @conn.download('/x', dir: @dir, content_disposition: true)
+        assert_equal [ '_]0;PWN__[2Jr_.txt' ], files
+    end
+
+    # Regression: the server's name replaced dest whole, directory
+    # included: the file went to the working directory
+    def test_a_content_disposition_name_stays_in_dest_directory
+        @server.get('/r', 'x', cd('server.pdf'))
+        Dir.mkdir(File.join(@dir, 'out'))
+        Dir.mkdir(cwd = File.join(@dir, 'cwd'))
+        Dir.chdir(cwd) do
+            @conn.download('/r', File.join(@dir, 'out', 'mine.pdf'), content_disposition: true)
+        end
+        assert_equal [ 'cwd', 'out', 'out/server.pdf' ], files
+    end
+
     def test_a_success_replaces_the_destination
         path = File.join(@dir, 'f.bin')
         File.write(path, 'old')
@@ -364,6 +418,25 @@ class TestProgressBarMiddleware < Minitest::Test
     def test_a_plain_request_keeps_its_body
         @server.get('/api', '{"ok":true}')
         assert_equal '{"ok":true}', @conn.get('/api').body
+    end
+
+    # Regression: the name was spliced into the bar's format as is: its
+    # escapes reached the terminal, and a :bar in it drew a second bar
+    def test_a_hostile_name_neither_escapes_nor_draws
+        @server.get('/x', 'x' * 5, 'Content-Disposition' =>
+                    %(attachment; filename="\e]0;PWN\a:bar.txt"))
+        Dir.mktmpdir do |dir|
+            @conn.download('/x', dir: dir, content_disposition: true)
+        end
+        refute_includes @out.string, "\e]0;"
+        assert_includes @out.string, "∶bar.txt"      # shown, not drawn
+    end
+
+    # The name from the URL, too: a :token in a path is shown, not drawn
+    def test_a_url_name_is_not_a_format
+        @server.get('/:percent.bin', 'x' * 5)
+        Dir.mktmpdir { |dir| @conn.download('/:percent.bin', dir: dir) }
+        assert_includes @out.string, "∶percent.bin"
     end
 
     def test_a_download_still_shows_a_bar

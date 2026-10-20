@@ -101,7 +101,12 @@ module EnumeratorThrottling
                 # is: through #next, in the caller's code between two
                 # calls, where nothing rescues it -- even after the caller
                 # has left the enumerator.
+                # The source sees the fiber-locals (Thread.current[...]) of
+                # the fiber that iterates, as it would without :hard; a
+                # lock that fiber holds (Monitor, Mutex) it does not own.
+                locals   = Thread.current.keys.to_h { [ it, Thread.current[it] ] }
                 producer = Fiber.new do
+                    locals.each {|k, v| Thread.current[k] = v }
                     source.each {|*v| Fiber.yield(v) }
                     nil
                 rescue Unwind

@@ -64,11 +64,12 @@ module Utils
                 # Consume separation delimiter
                 s.skip(/[\s;]+/)
 
-                # Look for a key (everything except [ =;])
+                # Look for a key (everything except whitespace, = and ;:
+                # a tab too may come before =, RFC 7230's BWS)
                 #   if not well formed consumed until next delimiter
                 # (\# keeps `#$&` literal: unescaped, a regex interpolates
                 # the last match into it)
-                if key = s.scan(/[^ =;]+/)&.downcase
+                if key = s.scan(/[^\s=;]+/)&.downcase
                     valid = key.match?(/\A[\w\-!\#$&+.^]+(?:\*\d+\*?|\*)?\z/i)
                 else
                     s.scan(/[^;]*/)

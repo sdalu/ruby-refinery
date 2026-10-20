@@ -2,6 +2,8 @@
 
 # See: https://codeincomplete.com/articles/ruby-daemons/#pid-file-management
 
+require 'securerandom'
+
 module Refinery
 module Daemonize
     refine Process.singleton_class do
@@ -15,8 +17,13 @@ module Daemonize
         # faster's fresh pidfile by path, and linked its own.
         def pid_write(file)
             owner = Process.pid
-            tmp   = "#{file}.#{owner}.tmp"
-            File.write(tmp, owner.to_s)
+            # A name no one can guess, created afresh and not through a
+            # link: <pidfile>.<pid>.tmp, written following links, overwrote
+            # the target of a symlink planted there (in /tmp, by anyone),
+            # and the pidfile became a hard link to it
+            tmp   = "#{file}.#{owner}.#{SecureRandom.hex(6)}.tmp"
+            ::File.open(tmp, ::File::WRONLY | ::File::CREAT | ::File::EXCL |
+                             ::File::NOFOLLOW, 0644) { it.write(owner.to_s) }
             begin
                 Process.pid_lock(file) do
                     loop do
@@ -68,7 +75,10 @@ module Daemonize
         def pid_lock(file)
             held = (Thread.current[:refinery_pid_locks] ||= {})
             return yield if held[file]
-            ::File.open("#{file}.lock", ::File::RDWR | ::File::CREAT, 0644) do |lock|
+            # (not through a link: a symlink planted there would have the
+            # lock create a file wherever it points)
+            ::File.open("#{file}.lock", ::File::RDWR | ::File::CREAT | ::File::NOFOLLOW,
+                        0644) do |lock|
                 lock.flock(::File::LOCK_EX)
                 held[file] = true
                 yield
@@ -86,9 +96,13 @@ module Daemonize
                 return Time.now - ::File.mtime(file) < 5 ? :running : :dead
             end
             pid = data.to_i
-            return :dead if pid == 0
+            # Not a process: 0 and below would ask kill(2) about a whole
+            # process group, past a C int it raises RangeError
+            return :dead unless pid.positive?
             Process.kill(0, pid)      # check process status
             :running
+        rescue RangeError
+            :dead
         rescue Errno::ENOENT     # removed meanwhile
             :exited
         rescue Errno::ESRCH

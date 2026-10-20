@@ -40,7 +40,7 @@ module MQTTResilient
         # Retries +retry_count+ times over a broken connection,
         # reconnecting in between, then raises: the last reconnect's
         # error if it failed, else the publish's.
-        def publish(topic, message, retain = false, qos = 0,
+        def publish(topic, message = '', retain = false, qos = 0,   # as the gem
                     retry_delay: 5.0, retry_count: 3)
             reconnect_error = nil
             # The same pause before each retry, retry_delay in all

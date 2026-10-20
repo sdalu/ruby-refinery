@@ -58,8 +58,14 @@ class ProgressBar < ::Faraday::Middleware
 
     # Prefer the filename resolved by the downloader (final saved name),
     # falling back to the basename extracted from the uri.
+    #
+    # The name is spliced into the format, which TTY::ProgressBar reads:
+    # a control character would reach the terminal as is, and a :bar or
+    # :percent in the name would be drawn.  So controls show as '?', and
+    # ':' as its look-alike U+2236 (the file itself keeps its ':').
     def filename(env)
         name = env[:download_filename] || File.basename(env.url.path.to_s)
+        name = name.gsub(/[[:cntrl:]]/, '?').tr(':', "∶")
         options[:shorten] ? self.class.shorten(name, options[:shorten]) : name
     end
 end

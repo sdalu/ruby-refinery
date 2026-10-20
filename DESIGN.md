@@ -56,6 +56,13 @@ is a `StandardError`: a source's plain `rescue => e`, a fetcher
 retrying, let a `StandardError` `HardLimit` through no more than a hung
 fetch, and the limit was lost.
 
+The fiber has a cost beyond the switch: fiber-locals and lock
+ownership are per fiber.  The iterating fiber's fiber-locals are copied
+into the source's, so a source reading a locale or a request id finds
+it; locks cannot be, so a `Monitor` the caller holds is another fiber's
+there, and taking it deadlocks.  That stays, documented: it is the
+price of interrupting only the source.
+
 The rate limiter is a sliding window over the last `limit` passes, on
 the monotonic clock, so a wall-clock step cannot burst or stall it.
 
@@ -131,7 +138,9 @@ any `-v`.
 
 ## Daemonize: an exclusive, atomic create
 
-`pid_write` writes the pid to a file of its own and `link(2)`s it to
+`pid_write` writes the pid to a file of its own (a random name, created
+with `O_EXCL | O_NOFOLLOW`: a guessable one, in a world-writable `/tmp`,
+had the target of a symlink planted there overwritten) and `link(2)`s it to
 the pidfile, which fails if the pidfile exists: so two starts cannot
 both believe they own it, and the pidfile never exists empty.  (Created
 with `O_EXCL` and written after, it did, and a second start reading it

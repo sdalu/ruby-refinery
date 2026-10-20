@@ -143,7 +143,10 @@ nor the code between two `#next` calls; the iteration stops at the next
 item instead, so a block and `#next` behave alike.  To cut slow work of
 your own, wrap it yourself (`Timeout.timeout(5) { save(it) }`), where
 you know an interruption is safe.  A limit of `Float::INFINITY` is no
-limit.
+limit.  Under `:hard` the source runs in a fiber of its own: it sees
+the iterating fiber's fiber-locals (`Thread.current[...]`, copied in),
+but not the locks that fiber holds, so a source whose `#each` takes a
+`Monitor` the caller already holds deadlocks there.
 
 ### `Refinery::Stats`
 
@@ -206,7 +209,9 @@ Adds a `download` method to `Faraday::Connection` and, through
 - RFC 6266 / 5987 / 2231 content-disposition parsing (including continuations and encoded filenames)
 - Streaming download to file or IO
 - Filename taken from `Content-Disposition` (with `content_disposition: true`),
-  cut down to a basename with no leading dots before it is used
+  cut down to a basename with no leading dots and control characters
+  as `_` before it is used; with a `dest`, it names the file in `dest`'s
+  directory
 
 ```ruby
 using Refinery::Faraday::Downloader
@@ -220,7 +225,8 @@ conn.download("/export", dir: '.', content_disposition: true)
 conn.download("/maybe-empty", "out.bin", create_empty: false)
 ```
 
-A file is written as `<path>.part` and renamed into place only on a
+A file is written as `<path>.<random>.part` (created exclusively, not
+through a link) and renamed into place only on a
 2xx response: an error response, or a transfer failing partway, leaves
 any existing file untouched and no `.part` behind (the error body is
 not saved).  An IO destination gets the body as it comes, whatever the
@@ -243,7 +249,9 @@ needs the `tty-progressbar` gem). It shows the filename (the one the
 downloader saves to, else from the request URL); pass `shorten:` to
 elide the middle of long names (`biglongfile` → `big...file`).  It
 draws only for a request that streams (a `download`), and leaves the
-others on the connection alone:
+others on the connection alone.  In the name shown, control characters
+are `?` and `:` is `∶` (U+2236), so that a name cannot write to the
+terminal or be read as a `:bar` token:
 
 ```ruby
 require 'refinery/faraday/progress-bar'

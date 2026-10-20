@@ -1,4 +1,5 @@
 require 'fileutils'
+require 'securerandom'
 require 'uri'
 
 require 'faraday'
@@ -18,7 +19,7 @@ module Downloader
                      method: :get, body: nil, headers: nil, params: nil, &block)
             io     = nil
             opened = false
-            # A file is written as <path>.part and renamed into place once
+            # A file is written as <path>.<random>.part and renamed into place once
             # the response is a success: an error response, or a transfer
             # failing partway, leaves the old copy untouched.  A
             # caller-provided IO gets the body as it comes, whatever the
@@ -46,12 +47,18 @@ module Downloader
                         fn = fn.delete("\x00")
                         fn = fn.split(/[\/\\]/).last || ''
                         fn = fn.gsub(/\s+/, ' ')
+                        # Control characters (C0, DEL, C1) would reach the
+                        # disk, and the terminal through the progress bar
+                        fn = fn.gsub(/[[:cntrl:]]/, '_')
                         # Dots and blanks together: ' ..' and '. .' are
                         # dots once stripped
                         fn = fn.sub(/\A[.\s]+/, '')
                         fn = fn.strip
-                        # Override destination (unless sanitizing emptied it)
-                        d  = fn unless fn.empty?
+                        # Override the file name (unless sanitizing emptied
+                        # it), in dest's directory when dest is given
+                        unless fn.empty?
+                            d = dest ? File.join(File.dirname(dest), fn) : fn
+                        end
                     end
                 end
                 # A root URL names no file: '/' would become dir: itself
@@ -72,8 +79,15 @@ module Downloader
                 # (eg: progress bar) can display it instead of guessing.
                 env[:download_filename] = File.basename(d)
                 FileUtils.mkdir_p(File.dirname(d), mode: 0777 & ~umask)
-                final, part = d, "#{d}.part"
-                File.open(part, "wb", mode).tap { opened = true }
+                # A name no one can guess, created afresh and not through
+                # a link: <dest>.part, opened following links, overwrote
+                # the target of a symlink planted there, and two downloads
+                # to one path shared it
+                final = d
+                part  = "#{d}.#{SecureRandom.hex(6)}.part"
+                File.open(part, ::File::WRONLY | ::File::CREAT | ::File::EXCL |
+                                ::File::NOFOLLOW | ::File::BINARY, mode)
+                    .tap { opened = true }
             end
 
             response = run_request(method, url, body, headers) do |req|
