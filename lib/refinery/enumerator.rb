@@ -184,6 +184,9 @@ module EnumeratorThrottling
             if limit.is_a?(Float) && limit.nan?
                 raise ArgumentError, "expected a number of seconds, got NaN"
             end
+            unless runtime.nil? || (runtime.is_a?(Numeric) && runtime.finite? && !runtime.negative?)
+                raise ArgumentError, "expected runtime: seconds >= 0, got #{runtime.inspect}"
+            end
             source = self
             enum   = Enumerator.new do |y|
                 start  = Time.now
@@ -253,6 +256,18 @@ module EnumeratorThrottling
         # A pause of +w+ seconds between items (none before the first or
         # after the last); a Range gives a random pause within it.
         def wait_inserted(w = 0.0..1.0, &block)
+            # Checked now, not at the second item: nil slept forever, a
+            # bad range or a negative pause raised once an item was out
+            pause = ->(x) { x.is_a?(Numeric) && x.finite? && !x.negative? }
+            ok    = if w.is_a?(Range)
+                        pause.(w.begin) && pause.(w.end) &&
+                            (w.exclude_end? ? w.begin < w.end : w.begin <= w.end)
+                    else
+                        pause.(w)
+                    end
+            unless ok
+                raise ArgumentError, "expected seconds >= 0, or a non-empty Range of them, got #{w.inspect}"
+            end
             source = self
             enum   = Enumerator.new do |y|
                 first = true

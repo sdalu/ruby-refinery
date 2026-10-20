@@ -20,8 +20,10 @@ module Daemonize
             # A name no one can guess, created afresh and not through a
             # link: <pidfile>.<pid>.tmp, written following links, overwrote
             # the target of a symlink planted there (in /tmp, by anyone),
-            # and the pidfile became a hard link to it
-            tmp   = "#{file}.#{owner}.#{SecureRandom.hex(6)}.tmp"
+            # and the pidfile became a hard link to it.  A name of its own,
+            # beside the pidfile: the pidfile's name plus a suffix could
+            # pass NAME_MAX.
+            tmp   = File.join(File.dirname(file), ".#{owner}.#{SecureRandom.hex(6)}.tmp")
             ::File.open(tmp, ::File::WRONLY | ::File::CREAT | ::File::EXCL |
                              ::File::NOFOLLOW, 0644) { it.write(owner.to_s) }
             begin

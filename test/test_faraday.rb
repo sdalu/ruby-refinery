@@ -370,6 +370,52 @@ class TestDownloader < Minitest::Test
         assert_equal [ 'cwd', 'out', 'out/server.pdf' ], files
     end
 
+    # Regression: `filename` with no value parsed as true, and the
+    # sanitizer called String methods on it: NoMethodError
+    def test_a_filename_parameter_without_value_falls_back_to_the_url
+        [ 'attachment; filename', 'attachment; filename*' ].each_with_index do |h, i|
+            @server.get("/v#{i}.bin", 'x', 'Content-Disposition' => h)
+            @conn.download("/v#{i}.bin", dir: @dir, content_disposition: true)
+            assert_equal [ "v#{i}.bin" ], files, h
+            File.delete(File.join(@dir, "v#{i}.bin"))
+        end
+    end
+
+    # Regression: an unusable filename* (empty, dots) won over a good
+    # filename, then sanitized to nothing: the URL name was used
+    def test_an_unusable_filename_star_falls_back_to_filename
+        [ %(attachment; filename="report.pdf"; filename*=UTF-8''),
+          %(attachment; filename="report.pdf"; filename*=UTF-8''%2E%2E) ].each_with_index do |h, i|
+            @server.get("/u#{i}.bin", 'x', 'Content-Disposition' => h)
+            @conn.download("/u#{i}.bin", dir: @dir, content_disposition: true)
+            assert_equal [ 'report.pdf' ], files, h
+            File.delete(File.join(@dir, 'report.pdf'))
+        end
+    end
+
+    # Regression: <name>.<random>.part was 18 bytes longer than the name,
+    # so a valid name of 238 bytes or more could not be written
+    def test_a_long_file_name_is_saved
+        long = "#{'a' * 240}.txt"
+        @server.get('/l.bin', 'x', cd(long))
+        @conn.download('/l.bin', dir: @dir, content_disposition: true)
+        assert_equal [ long ], files
+        @server.get('/m.bin', 'y')
+        @conn.download('/m.bin', File.join(@dir, "#{'b' * 251}.bin"))
+        assert_includes files, "#{'b' * 251}.bin"
+    end
+
+    # A server's name past 255 bytes is cut to 255, its extension kept and
+    # no character split
+    def test_an_overlong_content_disposition_name_is_cut
+        @server.get('/o.bin', 'x', cd("#{'é' * 200}.pdf"))
+        @conn.download('/o.bin', dir: @dir, content_disposition: true)
+        name = files.first
+        assert_operator name.bytesize, :<=, 255
+        assert name.end_with?('.pdf'), name
+        assert name.valid_encoding?
+    end
+
     def test_a_success_replaces_the_destination
         path = File.join(@dir, 'f.bin')
         File.write(path, 'old')

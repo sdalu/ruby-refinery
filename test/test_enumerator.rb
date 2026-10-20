@@ -355,5 +355,15 @@ class TestEnumeratorThrottling < Minitest::Test
         assert_raises(ArgumentError) { [ 1 ].rate_limited(1, per: 0) }
         assert_raises(TypeError)     { [ 1 ].time_limited('soon') }
         assert_raises(ArgumentError) { [ 1 ].time_limited(1, :medium) }
+        # Regression: wait_inserted checked nothing, so nil slept forever
+        # after the first item, and a bad range or a negative pause raised
+        # only once an item had been handed out; runtime was unchecked
+        [ nil, -1, Float::INFINITY, 1..0, 1...1, 'x', 0.. ].each do |w|
+            assert_raises(ArgumentError, w.inspect) { [ 1, 2 ].wait_inserted(w) }
+        end
+        assert_equal [ 1, 2 ], [ 1, 2 ].wait_inserted(0..0).to_a
+        [ -1, 'x', Float::INFINITY ].each do |r|
+            assert_raises(ArgumentError, r.inspect) { [ 1 ].time_limited(1, runtime: r) }
+        end
     end
 end

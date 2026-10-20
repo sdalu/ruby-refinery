@@ -4,6 +4,7 @@ require_relative 'helper'
 
 return unless require_optional('mqtt')
 
+require 'timeout'
 require 'refinery/mqtt'
 
 # Replace the gem's own low-level methods so that the refinement's
@@ -132,6 +133,19 @@ class TestMQTTResilient < Minitest::Test
         Thread.current[:role] = :main
         @client.publish('t')
         assert_equal [ [ :write, :main ] ], events
+    end
+
+    # Regression: a fractional retry_count never reached zero (retried
+    # forever), and a negative one or a negative retry_delay raised from
+    # sleep, hiding the real error
+    def test_publish_refuses_bad_retry_arguments
+        [ { retry_count: 1.5 }, { retry_count: -1 }, { retry_delay: -1.0 },
+          { retry_delay: Float::INFINITY } ].each do |kw|
+            assert_raises(ArgumentError, kw.inspect) do
+                Timeout.timeout(2) { @client.publish('t', 'm', retry_delay: 0.01, **kw) }
+            end
+        end
+        assert_empty events, 'published despite bad arguments'
     end
 
     def test_retry_count_zero_raises_at_once

@@ -155,6 +155,20 @@ class TestDaemonize < Minitest::Test
         end
     end
 
+    # <pidfile>.<pid>.<random>.tmp was some 25 bytes longer than the
+    # pidfile's name: a valid long name could not be written
+    def test_a_long_pidfile_name_is_written
+        pid = File.join(@dir, "#{'p' * 240}.pid")
+        out, err, st = ruby_run(<<~RUBY)
+            require 'refinery/daemonize'
+            using Refinery::Daemonize
+            Process.pid_write(#{pid.inspect})
+            print File.read(#{pid.inspect})
+        RUBY
+        assert st.success?, err
+        assert_match(/\A\d+\z/, out)
+    end
+
     def test_refuses_to_start_beside_a_running_one
         File.write(@pid, Process.pid.to_s)
         _, err, st = ruby_run(<<~RUBY)

@@ -19,7 +19,7 @@ module Downloader
                      method: :get, body: nil, headers: nil, params: nil, &block)
             io     = nil
             opened = false
-            # A file is written as <path>.<random>.part and renamed into place once
+            # A file is written as .<random>.part beside it and renamed into place once
             # the response is a success: an error response, or a transfer
             # failing partway, leaves the old copy untouched.  A
             # caller-provided IO gets the body as it comes, whatever the
@@ -33,6 +33,29 @@ module Downloader
             received = 0
             start    = nil      # a caller IO's position before the body
 
+            # A server's file name, made a safe basename: '' if nothing
+            # usable is left
+            sanitize = lambda do |fn|
+                fn = fn.delete("\x00")
+                fn = fn.split(/[\/\\]/).last || ''
+                fn = fn.gsub(/\s+/, ' ')
+                # Control characters (C0, DEL, C1) would reach the disk,
+                # and the terminal through the progress bar
+                fn = fn.gsub(/[[:cntrl:]]/, '_')
+                # Dots and blanks together: ' ..' and '. .' are dots
+                # once stripped
+                fn = fn.sub(/\A[.\s]+/, '').strip
+                # At most NAME_MAX (255) bytes: the extension kept, no
+                # character split
+                if fn.bytesize > 255
+                    ext = File.extname(fn)
+                    ext = '' if ext.bytesize > 32
+                    fn  = fn[0, fn.size - ext.size].byteslice(0, 255 - ext.bytesize)
+                            .scrub('') + ext
+                end
+                fn
+            end
+
             # Resolve the final destination from the response. Returns either a
             # String path (a file to open) or the caller-provided IO.
             resolve = lambda do |env|
@@ -42,24 +65,15 @@ module Downloader
                 if content_disposition
                     cd = env.response_headers['Content-Disposition']
                     kv = ::Faraday::Utils.parse_content_disposition(cd)
-                    if fn = kv['filename*'] || kv['filename']
-                        # Sanitizing
-                        fn = fn.delete("\x00")
-                        fn = fn.split(/[\/\\]/).last || ''
-                        fn = fn.gsub(/\s+/, ' ')
-                        # Control characters (C0, DEL, C1) would reach the
-                        # disk, and the terminal through the progress bar
-                        fn = fn.gsub(/[[:cntrl:]]/, '_')
-                        # Dots and blanks together: ' ..' and '. .' are
-                        # dots once stripped
-                        fn = fn.sub(/\A[.\s]+/, '')
-                        fn = fn.strip
-                        # Override the file name (unless sanitizing emptied
-                        # it), in dest's directory when dest is given
-                        unless fn.empty?
-                            d = dest ? File.join(File.dirname(dest), fn) : fn
-                        end
-                    end
+                    # The first candidate that is a name and survives
+                    # sanitizing: a valueless `filename` parses as true,
+                    # and an unusable filename* must not hide a good
+                    # filename (RFC 6266)
+                    fn = kv.values_at('filename*', 'filename')
+                           .grep(String).map(&sanitize).find { !it.empty? }
+                    # Override the file name, in dest's directory when
+                    # dest is given
+                    d = dest ? File.join(File.dirname(dest), fn) : fn if fn
                 end
                 # A root URL names no file: '/' would become dir: itself
                 if [ '', '/', '.', '..' ].include?(d)
@@ -83,8 +97,10 @@ module Downloader
                 # a link: <dest>.part, opened following links, overwrote
                 # the target of a symlink planted there, and two downloads
                 # to one path shared it
+                # (a name of its own, beside d: d's name plus a suffix went
+                # past NAME_MAX for a valid name of 238 bytes or more)
                 final = d
-                part  = "#{d}.#{SecureRandom.hex(6)}.part"
+                part  = File.join(File.dirname(d), ".#{SecureRandom.hex(6)}.part")
                 File.open(part, ::File::WRONLY | ::File::CREAT | ::File::EXCL |
                                 ::File::NOFOLLOW | ::File::BINARY, mode)
                     .tap { opened = true }

@@ -102,6 +102,27 @@ class TestHashDeflateKeys < Minitest::Test
         assert_equal({ 'a' => [ nil, { 'b' => 1 } ] }, { 'a.1.b' => 1 }.deflate_keys)
     end
 
+    # Regression: a caller's Hash or Array as a value passed for a branch,
+    # so a later key descended into it and wrote into the caller's object;
+    # in the other key order the same input raised
+    def test_a_container_value_is_a_leaf_and_never_written_into
+        v = {}
+        assert_raises(ArgumentError) { { 'a' => v, 'a.b' => 1 }.deflate_keys }
+        assert_equal({}, v)
+        assert_raises(ArgumentError) { { 'a.b' => 1, 'a' => v }.deflate_keys }
+        arr = [ 1 ]
+        assert_raises(ArgumentError) { { 'a' => arr, 'a.3' => 9 }.deflate_keys }
+        assert_equal [ 1 ], arr
+        assert_raises(ArgumentError) { { 'a' => {}.freeze, 'a.b' => 1 }.deflate_keys }
+        assert_equal({ 'a' => { 'x' => 1 } }, { 'a' => { 'x' => 1 } }.deflate_keys)
+    end
+
+    # Regression: a key with no segments ('', '.') vanished silently
+    def test_a_key_with_no_segment_is_refused
+        assert_raises(ArgumentError) { { '' => 1 }.deflate_keys }
+        assert_raises(ArgumentError) { { '.' => 1, 'k' => 3 }.deflate_keys }
+    end
+
     # Regression: a falsy leaf did not end the walk and became {}
     def test_falsy_leaves_are_kept
         h = { 'a' => nil, 'b.c' => false, 'd[0]' => nil, 'e' => 1 }

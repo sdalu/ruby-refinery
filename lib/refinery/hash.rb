@@ -37,7 +37,11 @@ module HashDeflateKeys
     # and a branch ('a' and 'a.b') raises too.
     def deflate_keys(sep: '.', max_index: 10_000, &mapper)
       out    = {}
-      branch = ->(c) { c.is_a?(Hash) || c.is_a?(Array) }
+      # A branch is a container built here; any other value, the caller's
+      # own Hash or Array included, is a leaf: never descended into,
+      # so never written into
+      built  = {}.compare_by_identity
+      branch = ->(c) { built.key?(c) }
       budget = max_index     # array slots still allowed, nil: no bound
       filled = {}.compare_by_identity     # array => indices a key set
 
@@ -46,6 +50,7 @@ module HashDeflateKeys
                  .gsub(/\[(\d+)\]/) { "#{sep}#{$1}" }   # sep literal, even '\\'
                  .split(sep).reject(&:empty?)
                  .map { |t| t.match?(/\A\d+\z/) ? t.to_i : t }
+        raise ArgumentError, "#{k.inspect}: no path segment" if toks.empty?
         budget += toks.size if budget
 
         cur = out
@@ -87,6 +92,7 @@ module HashDeflateKeys
 
           if !set
             cur[t] = nxt.is_a?(Integer) ? [] : {}
+            built[cur[t]] = true
           elsif !branch.(cur[t])
             raise ArgumentError, "#{k.inspect}: a branch where another key is a leaf"
           end

@@ -67,11 +67,13 @@ module TimeStepping
         def step(limit, step = 1)
             limit = limit.to_time
             start = self
-            # A Float read as the decimal it was written as, to the
-            # nanosecond (0.1, not 0.1000000000000000055...), and each time
-            # computed from the start, not added up: else the binary error
-            # accumulated, and ten steps of 0.1 went past start + 1.
-            delta = step.is_a?(Float) ? step.rationalize(Rational(1, 10**9)) : step
+            # A Float read as the decimal it was written as, its shortest
+            # round-tripping form (0.1, not 0.1000000000000000055...), and
+            # each time computed from the start, not added up: else the
+            # binary error accumulated, and ten steps of 0.1 went past
+            # start + 1.  (Rounded to the nanosecond instead, a step of
+            # 0.4 ns read as 0 and repeated the start forever.)
+            delta = step.is_a?(Float) ? Rational(step.to_s) : step
             enum  = Enumerator.new do |y|
                 i = 0                   # afresh on every iteration
                 if    step < 0

@@ -68,8 +68,8 @@ t0.step(t1, 86400).to_a
 ```
 
 The limit is included.  A `Float` step is read as the decimal it was
-written as, to the nanosecond, so `t0.step(t0 + 1, 0.1)` gives 11 times,
-the last `t0 + 1`.
+written as (its shortest form), so `t0.step(t0 + 1, 0.1)` gives 11
+times, the last `t0 + 1`, and a step below a nanosecond still steps.
 
 ### `Refinery::HashModify`
 
@@ -106,8 +106,10 @@ array indices, nor integer keys).  An index above `max_index:` (default
 10 000) raises `ArgumentError`, an array being as long as its largest
 index; so do arrays holding in all more than `max_index` slots plus one
 per path segment of the keys (dense input never does; many keys each
-under `max_index` could otherwise still exhaust memory), and a path
-that is both a leaf and a branch (`'a'` and `'a.b'`).
+under `max_index` could otherwise still exhaust memory), a path that
+is both a leaf and a branch (`'a'` and `'a.b'`), and a key with no
+segment (`''`).  A value that is itself a `Hash` or an `Array` is a
+leaf like any other: never descended into, so never written into.
 
 ```ruby
 using Refinery::HashDeflateKeys
@@ -143,7 +145,10 @@ nor the code between two `#next` calls; the iteration stops at the next
 item instead, so a block and `#next` behave alike.  To cut slow work of
 your own, wrap it yourself (`Timeout.timeout(5) { save(it) }`), where
 you know an interruption is safe.  A limit of `Float::INFINITY` is no
-limit.  Under `:hard` the source runs where `:soft` runs it, on the
+limit.  Every argument is checked at the call, not at the first item:
+a pause or a `runtime:` must be finite seconds >= 0 (a pause range,
+non-empty), so `wait_inserted(nil)` raises rather than sleeping
+forever.  Under `:hard` the source runs where `:soft` runs it, on the
 iterating fiber: it shares that fiber's fiber-locals (`Thread.current[...]`)
 both ways and re-enters the locks it holds.  The limit is raised by one
 watchdog thread for the whole process, started by the first `:hard`
@@ -214,8 +219,9 @@ Adds a `download` method to `Faraday::Connection` and, through
 - Streaming download to file or IO
 - Filename taken from `Content-Disposition` (with `content_disposition: true`),
   cut down to a basename with no leading dots and control characters
-  as `_` before it is used; with a `dest`, it names the file in `dest`'s
-  directory
+  as `_`, and to 255 bytes (the extension kept), before it is used;
+  `filename*` first, then `filename` if that one is unusable; with a
+  `dest`, it names the file in `dest`'s directory
 
 ```ruby
 using Refinery::Faraday::Downloader
@@ -229,8 +235,8 @@ conn.download("/export", dir: '.', content_disposition: true)
 conn.download("/maybe-empty", "out.bin", create_empty: false)
 ```
 
-A file is written as `<path>.<random>.part` (created exclusively, not
-through a link) and renamed into place only on a
+A file is written as `.<random>.part` beside it (created exclusively,
+not through a link) and renamed into place only on a
 2xx response: an error response, or a transfer failing partway, leaves
 any existing file untouched and no `.part` behind (the error body is
 not saved).  An IO destination gets the body as it comes, whatever the
@@ -320,7 +326,9 @@ Needs the `mqtt` gem, which this gem does not declare.
   and every later write fails with `EPIPE`);
 - `publish` retries over a broken connection, reconnecting in between
   (`retry_count: 3`, `retry_delay: 5.0` seconds spread evenly over the
-  retries, `retry_delay / retry_count` before each; `retry_count: 0`
+  retries, `retry_delay / retry_count` before each; `retry_count` an
+  `Integer` >= 0 and `retry_delay` >= 0, checked before the first
+  attempt; `retry_count: 0`
   raises at once); a reconnect the broker
   refuses spends a retry, and once they are spent the last reconnect's
   error is raised, `Errno::ECONNREFUSED` say, rather than the

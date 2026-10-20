@@ -1,4 +1,5 @@
 require_relative 'helper'
+require 'timeout'
 require 'refinery/datetime'
 
 class TestDateOfMonth < Minitest::Test
@@ -127,6 +128,17 @@ class TestTimeStepping < Minitest::Test
         assert_equal t0 + 1, e.last
         assert_equal t0 + Rational(3, 10), e[3]
         assert_equal 11, (t0 + 1).step(t0, -0.1).count
+    end
+
+    # Regression: a Float step was read to the nanosecond, so one below
+    # half a nanosecond was 0 (the start repeated forever) and 1.5 ns
+    # was bent into 2.5 ns.  Read relative to its size, it steps.
+    def test_a_sub_nanosecond_step_steps
+        t0 = Time.at(0)
+        assert_equal 3, Timeout.timeout(2) { t0.step(t0 + 1e-9, 4e-10).count }
+        assert_equal 3, Timeout.timeout(2) { (t0 + 1e-9).step(t0, -4e-10).count }
+        assert_equal t0 + Rational(3, 2 * 10**9), t0.step(t0 + 1, 1.5e-9).first(2).last
+        assert_equal 3, t0.step(t0 + 2e-9, 1e-9).count
     end
 
     # Regression: the cursor lived outside the enumerator, so a second
