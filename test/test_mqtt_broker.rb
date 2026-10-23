@@ -70,4 +70,77 @@ class TestMQTTBrokerDrop < Minitest::Test
         refute_equal 'ok', second, 'a retry must connect again, not return'
         assert_equal 2, accepts
     end
+
+    def test_reconnect_after_unanswered_ping_starts_with_fresh_ping_clocks
+        first, second = run_child(<<~RUBY)
+            require "refinery/mqtt"
+            using Refinery::MQTTResilient
+
+            # CONNACK, and PINGRESP only from the second connection on
+            conns = 0
+            port, _ = broker do |s|
+                n = (conns += 1)
+                loop do
+                    case MQTT::Packet.read(s)
+                    when MQTT::Packet::Connect
+                        s.write(MQTT::Packet::Connack.new(return_code: 0))
+                    when MQTT::Packet::Pingreq
+                        s.write(MQTT::Packet::Pingresp.new) if n > 1
+                    end
+                end
+            end
+            c = MQTT::Client.new(host: "127.0.0.1", port: port, keep_alive: 2)
+
+            # What ends a connection held +secs+, if anything
+            life = lambda do |secs|
+                c.connect { sleep secs }
+                "alive"
+            rescue Exception => e
+                e.class.name
+            end
+            # The first sends its PINGREQ at 2 s and leaves at 2.4,
+            # unanswered; the second follows at once, under the 3 s
+            # response timeout counted from its own start
+            puts JSON.dump([ life.(2.4), life.(5) ])
+        RUBY
+
+        assert_equal 'alive', first
+        assert_equal 'alive', second,
+                     'a ping unanswered on the last connection ended this one'
+    end
+
+    def test_read_error_during_a_write_closes_the_socket
+        errors, open = run_child(<<~RUBY)
+            require "refinery/mqtt"
+            using Refinery::MQTTResilient
+
+            # CONNACK, then a packet of no type 0.5 s later, reading
+            # nothing more: the client is writing when its read thread
+            # fails, and closes the socket under it.  Hung up 1 s later.
+            port, _ = broker do |s|
+                MQTT::Packet.read(s)
+                s.write(MQTT::Packet::Connack.new(return_code: 0))
+                sleep 0.5
+                s.write("\\x00\\x00")
+                sleep 1
+            end
+            c   = MQTT::Client.new(host: "127.0.0.1", port: port)
+            fds = []
+            errors = Array.new(5) do
+                c.connect do
+                    fds << c.instance_variable_get(:@socket).fileno
+                    c.publish("t", "x" * 20_000_000, retry_count: 0)
+                end
+                "none"
+            rescue Exception => e
+                e.class.name
+            end
+            sleep 1.5      # the broker's sockets gone, their fds with them
+            open = fds.count { |fd| IO.for_fd(fd, autoclose: false).stat rescue false }
+            puts JSON.dump([ errors.uniq, open ])
+        RUBY
+
+        refute_includes errors, 'none'
+        assert_equal 0, open, 'a socket the client gave up on is still open'
+    end
 end

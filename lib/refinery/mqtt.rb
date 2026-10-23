@@ -17,17 +17,68 @@ module MQTTResilient
         # true, the next connect returns without connecting, and every
         # write then fails with EPIPE.  Drop the socket on any failure
         # so that a retry connects afresh.
+        #
+        # The gem sets its ping clocks only in initialize: once a ping
+        # has gone unanswered, every later connection inherits the stale
+        # @last_ping_response, and its read thread raises "No Ping
+        # Response" on its first pass, the subscriber's SUBSCRIBE often
+        # still being written.  A new connection starts them afresh.
+        #
+        # With a block, the gem's own `ensure disconnect` is bypassed:
+        # see drop_connection.
         def connect(*args, &block)
-            super
-        rescue ::Exception
-            drop_connection
-            raise
+            unless connected?
+                @last_ping_request = @last_ping_response = current_time
+            end
+            begin
+                super(*args, &nil)
+            rescue ::Exception
+                drop_connection
+                raise
+            end
+            return unless block
+
+            begin
+                yield(self)
+            ensure
+                drop_connection(goodbye: true)
+            end
         end
 
-        # Close without sending DISCONNECT: on a dead socket the gem's
-        # disconnect fails writing it and never closes the socket.
-        def drop_connection
-            self.disconnect(false)
+        # Close, sending DISCONNECT only if +goodbye+: on a dead socket
+        # the gem's disconnect fails writing it and never closes the
+        # socket.
+        #
+        # The socket is closed here, and the read thread, woken by it,
+        # left to finish rather than killed.  The read thread closes the
+        # socket itself on an error, and Ruby's IO#close waits there for
+        # any thread still writing to it (a SUBSCRIBE, a publish): that
+        # writer gets "stream closed in another thread", and the gem's
+        # disconnect, run as it unwinds, kills the read thread inside
+        # that wait.  On Ruby 3.4 the socket is then closed? and never
+        # closed: still subscribed, unread, one more each time.  The
+        # read thread's own raise into this one is held until the end,
+        # and dropped with the rest.
+        def drop_connection(goodbye: false)
+            Thread.handle_interrupt(Object => :never) do
+                reader, socket = @read_thread, @socket
+                if goodbye && connected?
+                    begin
+                        send_packet(MQTT::Packet::Disconnect.new)
+                    rescue StandardError, MQTT::Exception
+                        nil
+                    end
+                end
+                begin
+                    socket&.close
+                rescue StandardError
+                    nil
+                end
+                if reader&.alive? && !reader.equal?(Thread.current)
+                    reader.join(2) or reader.kill
+                end
+                self.disconnect(false)
+            end
         rescue StandardError, MQTT::Exception
             nil
         end

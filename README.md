@@ -324,6 +324,14 @@ Needs the `mqtt` gem, which this gem does not declare.
 - `connect` drops the socket when the handshake fails partway, so a
   retry connects again (the gem leaves it open: `connected?` stays true
   and every later write fails with `EPIPE`);
+- `connect` restarts the keep-alive clocks, which the gem sets only
+  once per client: after one unanswered ping, every reconnection died
+  of "No Ping Response" on its first pass;
+- a connection ending, with a block or through a reconnect, closes its
+  socket even when the read thread failed while another thread was
+  writing (the gem kills that thread inside `IO#close`, and on Ruby 3.4
+  the descriptor stays open: one leaked, still-subscribed socket each
+  time);
 - `publish` retries over a broken connection, reconnecting in between
   (`retry_count: 3`, `retry_delay: 5.0` seconds spread evenly over the
   retries, `retry_delay / retry_count` before each; `retry_count` an

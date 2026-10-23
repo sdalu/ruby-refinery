@@ -148,6 +148,24 @@ rather than a per-client `@lock ||= Mutex.new`, which would have an
 initialisation race of its own.  The cost: two clients in one process
 serialise against each other.
 
+The gem resets nothing it measures pings by: `@last_ping_request` and
+`@last_ping_response` are set in `initialize` only.  After one
+unanswered ping every new connection starts already overdue, and its
+read thread ends it on its first pass.  The refined `connect` sets
+both before connecting.
+
+Teardown never kills a read thread that may be closing the socket.
+On a read error the gem's read thread closes the socket itself, and
+Ruby's `IO#close` first interrupts any thread writing to it ("stream
+closed in another thread"), then waits for it.  The writer unwinds
+through the gem's `ensure disconnect`, which kills the read thread
+inside that wait.  On Ruby 3.4 the IO then reads as closed while its
+descriptor stays open, so nothing ever closes it.  With a block, the
+refined `connect` therefore takes over the gem's ensure.
+`drop_connection` closes the socket, lets the woken read thread finish
+(2 s at most, killed past that), and holds the read thread's raise
+into the caller until the end, where it is dropped.
+
 ## CLI: counts in the option store
 
 `-v` is repeatable, and its handler returns the running count, so
